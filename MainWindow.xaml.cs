@@ -133,6 +133,16 @@ public sealed partial class MainWindow : Window
     private readonly TrayIconService _trayIconService = new();
     private bool _closeToTray;
 
+    // "Show timer in taskbar" setting (Settings flyout ShowTaskbarProgressToggle, persisted via
+    // AppConfig.ShowTaskbarProgress) - mirrors the ITaskbarList3-driven progress bar overlaid on this
+    // app's taskbar icon while automation runs (see Services/TaskbarProgressService). _lastTaskbarProgress
+    // holds the most recent numeric progress reported by the engine (see StatusChangedEventArgs.Progress)
+    // so a "Paused" report with no countdown of its own (movement just detected) can still repaint the
+    // bar amber/yellow at wherever it already was, instead of resetting it to 0.
+    private readonly TaskbarProgressService _taskbarProgressService = new();
+    private bool _showTaskbarProgress;
+    private double _lastTaskbarProgress;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -152,6 +162,7 @@ public sealed partial class MainWindow : Window
         UpdateTitleBarCaptionSpacer();
         InitializeGlobalHotkey();
         InitializeTrayIcon();
+        _taskbarProgressService.Initialize(Win32Interop.GetWindowFromWindowId(AppWindow.Id));
 
         _engine.StatusChanged += Engine_StatusChanged;
         _engine.AutoStopped += Engine_AutoStopped;
@@ -161,6 +172,7 @@ public sealed partial class MainWindow : Window
         AppWindow.Closing += AppWindow_Closing;
         Closed += (_, _) => _hotkeyService.Dispose();
         Closed += (_, _) => _trayIconService.Dispose();
+        Closed += (_, _) => _taskbarProgressService.Dispose();
 
         // WinUI auto-focuses the first focusable control in tab order (MinutesBox, being first in
         // the Interval card) once the window activates and its control template is ready - there's no
@@ -470,6 +482,9 @@ public sealed partial class MainWindow : Window
         _closeToTray = config.CloseToTray;
         CloseToTrayToggle.IsOn = _closeToTray;
 
+        _showTaskbarProgress = config.ShowTaskbarProgress;
+        ShowTaskbarProgressToggle.IsOn = _showTaskbarProgress;
+
         _hotkeyModifiers = config.HotkeyModifiers;
         _hotkeyKey = config.HotkeyKey;
         HotkeyButtonLabel.Text = FormatHotkey(_hotkeyModifiers, _hotkeyKey);
@@ -691,6 +706,8 @@ public sealed partial class MainWindow : Window
         _isProgrammaticToggleOff = false;
 
         _engine.Stop();
+        _taskbarProgressService.Clear();
+        _lastTaskbarProgress = 0;
 
         // Discard any status hold left over from a fast start-then-stop, so
         // ReleaseStatusHoldAfterDelayAsync's still-pending timer can't later overwrite the
@@ -863,6 +880,30 @@ public sealed partial class MainWindow : Window
             _ => StatusTone.Muted
         };
         SetStatusText(e.Text, tone);
+        UpdateTaskbarProgress(e);
+    }
+
+    /// <summary>
+    /// Mirrors the engine's countdown onto the taskbar icon's progress bar (see
+    /// Services/TaskbarProgressService) when ShowTaskbarProgressToggle is on - no-ops entirely
+    /// otherwise, which is also why turning the setting off mid-run needs its own explicit Clear()
+    /// call (see ShowTaskbarProgressToggle_Toggled). e.Progress is null for a "Paused" report that
+    /// doesn't carry its own countdown (movement just detected, before the resume countdown appears) -
+    /// _lastTaskbarProgress keeps the bar at wherever it already was instead of snapping to 0.
+    /// </summary>
+    private void UpdateTaskbarProgress(StatusChangedEventArgs e)
+    {
+        if (!_showTaskbarProgress)
+        {
+            return;
+        }
+
+        if (e.Progress.HasValue)
+        {
+            _lastTaskbarProgress = e.Progress.Value;
+        }
+
+        _taskbarProgressService.SetProgress(_lastTaskbarProgress, paused: e.Kind == StatusKind.Paused);
     }
 
     private void Engine_AutoStopped(object? sender, EventArgs e)
@@ -1178,6 +1219,27 @@ public sealed partial class MainWindow : Window
         _closeToTray = CloseToTrayToggle.IsOn;
         UpdateTrayIconVisibility();
         ConfigService.Update(c => c.CloseToTray = _closeToTray);
+    }
+
+    /// <summary>
+    /// Turning this off immediately clears the taskbar progress bar (rather than leaving it frozen at
+    /// whatever it last showed until the run stops) since UpdateTaskbarProgress no-ops entirely while
+    /// _showTaskbarProgress is false and won't repaint it on its own.
+    /// </summary>
+    private void ShowTaskbarProgressToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializing)
+        {
+            return;
+        }
+
+        _showTaskbarProgress = ShowTaskbarProgressToggle.IsOn;
+        if (!_showTaskbarProgress)
+        {
+            _taskbarProgressService.Clear();
+        }
+
+        ConfigService.Update(c => c.ShowTaskbarProgress = _showTaskbarProgress);
     }
 
     private void ShowActionCounterToggle_Toggled(object sender, RoutedEventArgs e)

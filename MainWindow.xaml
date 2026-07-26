@@ -667,7 +667,7 @@
                 <Button.Flyout>
                     <Flyout x:Name="SettingsFlyout" Placement="TopEdgeAlignedRight" Closed="SettingsFlyout_Closed">
                         <StackPanel Spacing="16" Width="246">
-                            <!-- Version caption (e.g. "v1.1.2") mirrors MouseUtil.csproj's <Version>,
+                            <!-- Version caption (e.g. "v1.2.0") mirrors MouseUtil.csproj's <Version>,
                                  read at startup via SettingsVersionText's x:Name in code-behind since
                                  this app is unpackaged and has no Package.Current to query. Fixed to
                                  the header row's right edge, deliberately understated (Light weight,
@@ -754,6 +754,36 @@
                                         Toggled="PauseOnMovementToggle_Toggled"
                                         AutomationProperties.AutomationId="PauseOnMovementToggle"
                                         AutomationProperties.Name="Pause spinning on movement" />
+                                </Grid>
+
+                                <!-- Mirrors the running interval countdown as a progress bar on the app's
+                                     taskbar icon (ITaskbarList3 - see Services/TaskbarProgressService),
+                                     turning amber/yellow automatically while paused. Never disabled while
+                                     running (purely cosmetic, like CloseToTrayToggle below), so its label
+                                     stays a plain TextBlock. -->
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock
+                                        Grid.Column="0"
+                                        Text="Countdown display in taskbar"
+                                        VerticalAlignment="Center"
+                                        TextWrapping="Wrap" />
+                                    <ToggleSwitch
+                                        x:Name="ShowTaskbarProgressToggle"
+                                        Grid.Column="1"
+                                        OnContent=""
+                                        OffContent=""
+                                        MinWidth="0"
+                                        Width="44"
+                                        Padding="0"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Center"
+                                        Toggled="ShowTaskbarProgressToggle_Toggled"
+                                        AutomationProperties.AutomationId="ShowTaskbarProgressToggle"
+                                        AutomationProperties.Name="Show timer progress in taskbar" />
                                 </Grid>
 
                                 <!-- Closing behavior: when on, closing the main window (X button, Alt+F4,

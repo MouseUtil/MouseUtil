@@ -8,30 +8,62 @@ in one of two modes on a timer:
   pixel, without clicking. Useful for keeping a machine from going idle/locking/sleeping.
 
 Ships as an **unpackaged, self-contained** app: no MSIX, no Store install, no Developer Mode
-requirement. `dotnet publish` produces a folder you can copy anywhere and run directly, like a
-portable exe.
+requirement. A per-user Inno Setup installer is provided for easy distribution, or you can run the
+`dotnet publish` output directly as a portable folder.
+
+## Features
+
+- **Interval timer** — minutes + seconds, down to a 0.05s minimum total.
+- **Auto Stop** (optional) — stop automatically after a configured number of clicks/spins, or at a
+  specific date/time.
+- **Pause on movement** (Spin mode) — pauses the countdown while you move the mouse yourself, and
+  requires the mouse to sit still for a full interval before resuming.
+- **Global hotkey** — default `F6`, re-recordable in Settings, to start/stop from anywhere without
+  focusing the window.
+- **Action counter** — optionally shows a running click/spin count on the Start/Stop button and a
+  "Stopped after N clicks/spins" summary when a run ends.
+- **Close to tray** — optionally hides to the system tray instead of exiting when the window is
+  closed, with a tray icon menu to restore or exit.
+- **Taskbar progress** — optionally mirrors the countdown as a progress overlay on the taskbar icon.
+- **Light/Dark/System theme**, close confirmation while automation is running, and single-instance
+  enforcement (a second launch just refocuses the existing window).
+
+Interval, theme, hotkey, and the toggles above are remembered across runs
+(`%USERPROFILE%\.mouse_utility_config.json`).
 
 ## Requirements
 
 - Windows 10 20H1 (build 19041) or later, Windows 11 recommended.
-- .NET 8 SDK, to build from source. (Not required on the machine you *run* the published app on —
-  the publish output is self-contained.)
+- .NET 8 SDK, to build from source. (Not required on the machine you *run* the published app or
+  installer on — both are self-contained.)
 
 ## Build & run (development)
 
 ```powershell
 cd MouseUtil
-dotnet build -p:Platform=x64
+.\BuildAndRun.ps1 MouseUtil.csproj
 ```
 
-Run the built exe directly — this is an unpackaged app, so there's no `winapp run` / MSIX install
-step:
+This restores, builds (Debug/x64 by default), and launches the app via `winapp run`. Pass
+`-SkipRun` to build only, or override config/platform with MSBuild-style args, e.g.
+`.\BuildAndRun.ps1 MouseUtil.csproj -SkipRun /p:Configuration=Release`.
+
+## Building the installer
+
+The installer (`installer\MouseUtil.iss`) packages the self-contained **Release** build with Inno
+Setup into a per-user installer — no admin rights required, adds a Start Menu entry and
+uninstaller.
 
 ```powershell
-.\bin\x64\Debug\net8.0-windows10.0.19041.0\win-x64\MouseUtil.exe
+.\BuildAndRun.ps1 MouseUtil.csproj -SkipRun /p:Configuration=Release
+ISCC.exe installer\MouseUtil.iss
 ```
 
-## Publish (portable folder)
+Output lands at `installer\Output\MouseUtilSetup.exe`. The app version shown in the Settings
+flyout is read from the running exe's file version, which is kept in sync between
+`MouseUtil.csproj`'s `<Version>` and `MouseUtil.iss`'s `MyAppVersion` (currently `1.2.0`).
+
+## Publish (portable folder, no installer)
 
 ```powershell
 dotnet publish -c Release -r win-x64 --self-contained true
@@ -46,7 +78,8 @@ platforms/RIDs).
 
 ## If you want an MSIX-packaged version instead
 
-This project intentionally skips packaging. To convert it:
+This project intentionally skips MSIX packaging in favor of the unpackaged + Inno Setup installer
+combo above. To convert it to MSIX instead:
 
 1. Add a `Package.appxmanifest` (e.g. via **Project > Add > New Item > Application Manifest**, or
    scaffold a fresh `dotnet new winui-mvvm` project and diff its manifest in).
@@ -60,15 +93,18 @@ This project intentionally skips packaging. To convert it:
 
 ## Usage
 
-- **Mode pill** (top right, in the title bar): switch between **Click** and **Spin**.
-- **Interval**: minutes + seconds. Minimum total interval is 0.05s.
-- **Automatically stop at**: optional date/time after which the utility turns itself off.
-- **Settings** (gear icon): Light/Dark/System theme, and Spin mode's "Pause on movement" toggle.
-- **ON/OFF pill**: starts/stops the utility. Turning on always waits a fixed 3-second grace period
-  before the first action, regardless of the interval.
-
-Interval, theme, and "pause on movement" are remembered across runs
-(`%USERPROFILE%\.mouse_utility_config.json`).
+- **Mode switch**: switch between **Click** and **Spin**.
+- **Interval**: minutes + seconds.
+- **Auto Stop** (checkbox + button): configure a stop condition — after a number of clicks/spins,
+  or at a specific date/time. Must be explicitly (re)confirmed each session before a run will use
+  it.
+- **Settings** (gear icon): Light/Dark/System theme, global Start/Stop hotkey, action counter,
+  close-to-tray, and taskbar progress toggles, plus Spin mode's "Pause on movement" toggle.
+- **ON/OFF pill**: starts/stops the utility, or shows a running click/spin count if the action
+  counter is enabled. Turning on always waits a fixed 3-second grace period before the first
+  action (unless started via the global hotkey), regardless of the interval.
+- **System tray**: if "Close to tray" is enabled, closing the window hides it to the tray instead
+  of exiting; the tray icon's context menu can restore the window or exit the app.
 
 ### Status line reference
 
@@ -90,10 +126,18 @@ fires immediately and a fresh full-length countdown begins.
 ```
 MouseUtil.csproj       Unpackaged/self-contained project settings
 app.manifest           DPI awareness / OS compatibility manifest
+BuildAndRun.ps1        Build (+ optionally run) helper script
+installer\MouseUtil.iss           Inno Setup script producing the per-user installer
 App.xaml(.cs)          Application entry point
 MainWindow.xaml(.cs)   UI, Mica backdrop, custom title bar, theming
-Interop/NativeMethods.cs      All Win32 P/Invoke (SetCursorPos, SendInput, GetDpiForWindow)
+Controls/StatusLabel.cs       Themed status-line control (Muted/Success/Caution/Critical tones)
+Controls/DimmableLabel.cs     Caption label that dims declaratively when its target control is disabled
+Interop/NativeMethods.cs      All Win32 P/Invoke (SetCursorPos, SendInput, GetDpiForWindow, hotkeys, etc.)
 Models/AppConfig.cs           Persisted settings shape
-Services/ConfigService.cs     Reload-modify-save JSON persistence
-Services/MouseAutomationEngine.cs   Background state machine (timing, pause-on-movement, spin sweep)
+Services/ConfigService.cs             Reload-modify-save JSON persistence
+Services/MouseAutomationEngine.cs     Background state machine (timing, pause-on-movement, spin sweep, auto stop)
+Services/GlobalHotkeyService.cs       RegisterHotKey-based global Start/Stop hotkey
+Services/TrayIconService.cs           Shell_NotifyIcon-based system tray icon and context menu
+Services/TaskbarProgressService.cs    ITaskbarList3-based taskbar icon progress overlay
+Services/SingleInstanceService.cs     Single-instance enforcement (refocuses the existing window)
 ```

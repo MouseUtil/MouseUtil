@@ -34,4 +34,9 @@ public sealed class AppConfig
     // Services/TrayIconService. The app keeps running (automation, if any, is unaffected); the tray
     // icon's "Exit" command is the only way to actually terminate the process while this is on.
     public bool CloseToTray { get; set; } = false;
+
+    // Default OFF: when true, the running interval countdown is mirrored as a progress bar overlaid
+    // on the app's taskbar icon (via ITaskbarList3 - see Services/TaskbarProgressService), the same
+    // mechanism installers use. Turns amber/yellow automatically while paused (pause-on-movement).
+    public bool ShowTaskbarProgress { get; set; } = false;
 }

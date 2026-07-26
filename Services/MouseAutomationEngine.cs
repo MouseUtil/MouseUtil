@@ -28,14 +28,24 @@ public enum StatusKind
 
 public sealed class StatusChangedEventArgs : EventArgs
 {
-    public StatusChangedEventArgs(string text, StatusKind kind)
+    public StatusChangedEventArgs(string text, StatusKind kind, double? progress = null)
     {
         Text = text;
         Kind = kind;
+        Progress = progress;
     }
 
     public string Text { get; }
     public StatusKind Kind { get; }
+
+    /// <summary>
+    /// How much of the current countdown (startup grace, interval, or paused-resume) is left, from
+    /// 1 (just started/fired) down to 0 (about to fire) - drives MainWindow's taskbar progress bar,
+    /// which drains as the countdown runs out rather than filling up. Null
+    /// when this report doesn't represent movement through a countdown (e.g. "Paused" with no visible
+    /// resume-countdown yet), in which case the taskbar bar's last value is left untouched.
+    /// </summary>
+    public double? Progress { get; }
 }
 
 public sealed class ActionPerformedEventArgs : EventArgs
@@ -127,7 +137,7 @@ public sealed class MouseAutomationEngine
             // before Task.Run, closes that gap instead of racing it.
             if (mode == AutomationMode.Spin)
             {
-                ReportStatus("Starting now", StatusKind.SpinStarting);
+                ReportStatus("Starting now", StatusKind.SpinStarting, 1);
             }
 
             var cts = new CancellationTokenSource();
@@ -231,7 +241,13 @@ public sealed class MouseAutomationEngine
                     {
                         paused = true;
                         stillness = TimeSpan.Zero;
-                        ReportStatus("Paused", StatusKind.Paused);
+
+                        // Reset the taskbar bar to full exactly once, right as pausing begins, then
+                        // freeze it there - every other Paused report below omits progress (null) so it
+                        // stays at that reset value instead of continuing to move while paused. The
+                        // combination (snap to full + yellow + frozen) is what reads as "paused" rather
+                        // than "still counting down".
+                        ReportStatus("Paused", StatusKind.Paused, 1);
                     }
                     else
                     {
@@ -270,7 +286,8 @@ public sealed class MouseAutomationEngine
                 }
 
                 var kind = remaining <= ImminentThreshold ? StatusKind.Imminent : StatusKind.Running;
-                ReportStatus(FormatCountdownStatus($"{verb} now", remaining, $"{verb} in {FormatSeconds(remaining)}"), kind);
+                var progress = remaining.TotalMilliseconds / interval.TotalMilliseconds;
+                ReportStatus(FormatCountdownStatus($"{verb} now", remaining, $"{verb} in {FormatSeconds(remaining)}"), kind, progress);
 
                 await Task.Delay(TickMilliseconds, token).ConfigureAwait(false);
                 remaining -= TimeSpan.FromMilliseconds(TickMilliseconds);
@@ -315,7 +332,8 @@ public sealed class MouseAutomationEngine
                 return false;
             }
 
-            ReportStatus(FormatCountdownStatus("Starting now", remaining, $"Starting in {FormatSeconds(remaining)}"), StatusKind.Starting);
+            var startupProgress = remaining.TotalMilliseconds / StartupGracePeriod.TotalMilliseconds;
+            ReportStatus(FormatCountdownStatus("Starting now", remaining, $"Starting in {FormatSeconds(remaining)}"), StatusKind.Starting, startupProgress);
             await Task.Delay(TickMilliseconds, token).ConfigureAwait(false);
             remaining -= TimeSpan.FromMilliseconds(TickMilliseconds);
         }
@@ -422,7 +440,7 @@ public sealed class MouseAutomationEngine
         return remaining <= CountdownLabelThreshold ? label : countdownText;
     }
 
-    private void ReportStatus(string text, StatusKind kind) => StatusChanged?.Invoke(this, new StatusChangedEventArgs(text, kind));
+    private void ReportStatus(string text, StatusKind kind, double? progress = null) => StatusChanged?.Invoke(this, new StatusChangedEventArgs(text, kind, progress));
 
     private void NotifyAutoStopped()
     {
