@@ -10,7 +10,7 @@
 
 #define MyAppName "MouseUtil"
 #define MyAppVersion "1.2.1"
-#define MyAppPublisher "KofeMug"
+#define MyAppPublisher "MouseUtil"
 #define MyAppExeName "MouseUtil.exe"
 #define MyBuildOutputDir "..\bin\x64\Release\net8.0-windows10.0.19041.0\win-x64"
 
