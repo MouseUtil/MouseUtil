@@ -768,7 +768,7 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBlock
                                         Grid.Column="0"
-                                        Text="Countdown display in taskbar"
+                                        Text="Show countdown progress on taskbar icon"
                                         VerticalAlignment="Center"
                                         TextWrapping="Wrap" />
                                     <ToggleSwitch
@@ -783,7 +783,7 @@
                                         VerticalAlignment="Center"
                                         Toggled="ShowTaskbarProgressToggle_Toggled"
                                         AutomationProperties.AutomationId="ShowTaskbarProgressToggle"
-                                        AutomationProperties.Name="Show timer progress in taskbar" />
+                                        AutomationProperties.Name="Show countdown progress on taskbar icon" />
                                 </Grid>
 
                                 <!-- Closing behavior: when on, closing the main window (X button, Alt+F4,

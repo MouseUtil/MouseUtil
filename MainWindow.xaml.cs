@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Media;
 using MouseUtil.Controls;
 using MouseUtil.Interop;
 using MouseUtil.Services;
+using System.Globalization;
 using Windows.Graphics;
 using Windows.System;
 using Windows.UI;
@@ -644,8 +645,8 @@ public sealed partial class MainWindow : Window
 
         var mode = _isSpinModeSelected ? AutomationMode.Spin : AutomationMode.Click;
 
-        var minutes = double.IsNaN(MinutesBox.Value) ? 0 : MinutesBox.Value;
-        var seconds = double.IsNaN(SecondsBox.Value) ? 0 : SecondsBox.Value;
+        var minutes = ReadCommittedOrTypedValue(MinutesBox);
+        var seconds = ReadCommittedOrTypedValue(SecondsBox);
         var totalSeconds = Math.Max(0.05, minutes * 60 + seconds);
         var interval = TimeSpan.FromSeconds(totalSeconds);
 
@@ -688,6 +689,46 @@ public sealed partial class MainWindow : Window
 
         _engine.Start(mode, interval, stopAt, stopAfterActionCount, PauseOnMovementToggle.IsOn, skipStartupCountdown);
         UpdateModeIndicators();
+    }
+
+    // NumberBox only re-parses typed input into Value on focus loss/Enter, so a hotkey-triggered start
+    // (which never moves focus) would otherwise read the last-committed Value and ignore text the user
+    // just typed but hasn't blurred away from yet. NumberBox's own Text DP turned out not to be a
+    // reliable stand-in either - measured (via logging) up to 60+ms of lag behind what's on screen,
+    // presumably from its own internal validation being debounced/async. Reading the template's actual
+    // "InputBox" TextBox part directly is the one source with zero indirection - it's the literal
+    // control the user is typing into.
+    private static double ReadCommittedOrTypedValue(NumberBox box)
+    {
+        var liveText = FindInputBoxText(box) ?? box.Text;
+
+        if (double.TryParse(liveText, NumberStyles.Any, CultureInfo.CurrentCulture, out var parsed) &&
+            !double.IsNaN(parsed))
+        {
+            return Math.Clamp(parsed, box.Minimum, box.Maximum);
+        }
+
+        return double.IsNaN(box.Value) ? 0 : box.Value;
+    }
+
+    private static string? FindInputBoxText(DependencyObject root)
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is TextBox { Name: "InputBox" } inputBox)
+            {
+                return inputBox.Text;
+            }
+
+            if (FindInputBoxText(child) is { } found)
+            {
+                return found;
+            }
+        }
+
+        return null;
     }
 
     private void PowerToggleButton_Unchecked(object sender, RoutedEventArgs e)

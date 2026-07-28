@@ -61,7 +61,7 @@ ISCC.exe installer\MouseUtil.iss
 
 Output lands at `installer\Output\MouseUtilSetup.exe`. The app version shown in the Settings
 flyout is read from the running exe's file version, which is kept in sync between
-`MouseUtil.csproj`'s `<Version>` and `MouseUtil.iss`'s `MyAppVersion` (currently `1.2.0`).
+`MouseUtil.csproj`'s `<Version>` and `MouseUtil.iss`'s `MyAppVersion` (currently `1.2.1`).
 
 ## Publish (portable folder, no installer)
 

@@ -28,7 +28,7 @@
     <!-- Kept in sync with installer\MouseUtil.iss's MyAppVersion - shown in the Settings flyout
          header (see MainWindow.xaml's SettingsFlyout) via Package.Current-less reflection on the
          running assembly, since this app is unpackaged and has no Package.appxmanifest. -->
-    <Version>1.2.0</Version>
+    <Version>1.2.1</Version>
 
     <Authors>KofeMug</Authors>
     <Company>KofeMug</Company>
