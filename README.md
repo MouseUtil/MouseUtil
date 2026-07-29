@@ -1,35 +1,47 @@
 # MouseUtil
 
-A native Windows 11 mouse-activity utility built with WinUI 3 (Windows App SDK) and .NET 8. It runs
-in one of two modes on a timer:
+**MouseUtil** is a lightweight Windows utility that keeps your mouse "active" by clicking or
+jiggling/moving in place, so your PC doesn't go idle, lock, or sleep during long calls,
+downloads, or AFK sessions. It runs natively on Windows 10/11 (WinUI 3 / .NET 8) with a clean,
+minimal interface.
 
-- **Click** — clicks at wherever the cursor currently is.
-- **Spin** — sweeps the cursor around a tiny ~12px circle and returns it to the exact starting
-  pixel, without clicking. Useful for keeping a machine from going idle/locking/sleeping.
+### Modes
 
-Ships as an **unpackaged, self-contained** app: no MSIX, no Store install, no Developer Mode
-requirement. A per-user Inno Setup installer is provided for easy distribution, or you can run the
-`dotnet publish` output directly as a portable folder.
+- **Auto click** — clicks at wherever the cursor currently is without moving it. Great for repetitive
+clicking tasks, keeping certain applications active, or automating simple interactions.
 
-## Features
+- **Spin mode** — sweeps the cursor around a tiny circle and returns it to the exact starting pixel,
+without clicking. Useful for keeping a machine from going idle/locking/sleeping.
 
-- **Interval timer** — minutes + seconds, down to a 0.05s minimum total.
-- **Auto Stop** (optional) — stop automatically after a configured number of clicks/spins, or at a
-  specific date/time.
-- **Pause on movement** (Spin mode) — pauses the countdown while you move the mouse yourself, and
-  requires the mouse to sit still for a full interval before resuming.
-- **Global hotkey** — default `F6`, re-recordable in Settings, to start/stop from anywhere without
-  focusing the window.
-- **Action counter** — optionally shows a running click/spin count on the Start/Stop button and a
-  "Stopped after N clicks/spins" summary when a run ends.
-- **Close to tray** — optionally hides to the system tray instead of exiting when the window is
-  closed, with a tray icon menu to restore or exit.
-- **Taskbar progress** — optionally mirrors the countdown as a progress overlay on the taskbar icon.
-- **Light/Dark/System theme**, close confirmation while automation is running, and single-instance
-  enforcement (a second launch just refocuses the existing window).
+### Features
 
-Interval, theme, hotkey, and the toggles above are remembered across runs
+- 🖱️ **Two automation modes** — Auto click, which sends a real left-click at a set interval, or
+Spin mode, which sweeps the cursor in a tiny circle and returns it to its exact starting pixel.
+- ⏱️ **Configurable interval** — set the delay between actions in minutes and seconds.
+- ✋ **Pause on manual movement** (Spin mode) — if you touch the mouse yourself, MouseUtil
+automatically pauses and resumes on a fresh countdown once you stop, so it never fights you
+for control.
+- 🛑 **Auto-stop conditions** — stop the run automatically after a set number of clicks/spins,
+or at a specific date and time.
+- ⌨️ **Global hotkey** — start or stop automation from anywhere with a single keypress (F6 by
+default), even while another app is focused.
+- 📊 **Live status and progress** — a real-time countdown ("Clicking in 12s"), action counter,
+and an optional progress bar mirrored onto the taskbar icon, all of which are optional.
+- 📥 **System tray support** — optionally close the window to the tray instead of exiting, so
+automation keeps running in the background.
+- 🎨 **Fluent design** with light/dark/system theming.
+- ⚙️ **Persistent settings** — Interval, theme, hotkey, and the toggles are remembered across runs
 (`%USERPROFILE%\.mouse_utility_config.json`).
+
+### Notes
+
+📦 **Unsigned installer**: Ships as an unsigned `.exe` installer, so Windows SmartScreen may
+display a warning the first time you run it.
+
+⚠️ **Fair warning**: I'm not a software developer. This project was developed primarily using
+Claude Code, with me directing the architecture, reviewing the generated code, testing, and making
+iterative improvements. All code in this repository has been reviewed before release. The only
+asset not created with AI is the app icon, which I designed myself.
 
 ## Requirements
 
