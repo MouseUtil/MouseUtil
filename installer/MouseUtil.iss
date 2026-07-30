@@ -9,7 +9,7 @@
 ; Output installer is written to installer\Output\MouseUtilSetup.exe
 
 #define MyAppName "MouseUtil"
-#define MyAppVersion "1.2.1"
+#define MyAppVersion "1.2.2"
 #define MyAppPublisher "MouseUtil"
 #define MyAppExeName "MouseUtil.exe"
 #define MyBuildOutputDir "..\bin\x64\Release\net8.0-windows10.0.19041.0\win-x64"
@@ -19,6 +19,7 @@
 AppId={{9C6C7A9E-9C0B-4C0A-9C7B-5B9E6E6B7E10}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+AppVerName={#MyAppName}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
@@ -34,9 +35,14 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 DisableProgramGroupPage=yes
+DisableWelcomePage=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Messages]
+WelcomeLabel1=[name] {#MyAppVersion} Setup Wizard
+WelcomeLabel2=This will install or update MouseUtil on your computer.
 
 [Files]
 Source: "{#MyBuildOutputDir}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion

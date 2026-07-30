@@ -5,6 +5,10 @@ jiggling/moving in place, so your PC doesn't go idle, lock, or sleep during long
 downloads, or AFK sessions. It runs natively on Windows 10/11 (WinUI 3 / .NET 8) with a clean,
 minimal interface.
 
+### Download
+
+To download MouseUtil, head over to the [Releases](https://github.com/MouseUtil/MouseUtil/releases) page.
+
 ### Modes
 
 - **Auto click** — clicks at wherever the cursor currently is without moving it. Great for repetitive
@@ -73,7 +77,7 @@ ISCC.exe installer\MouseUtil.iss
 
 Output lands at `installer\Output\MouseUtilSetup.exe`. The app version shown in the Settings
 flyout is read from the running exe's file version, which is kept in sync between
-`MouseUtil.csproj`'s `<Version>` and `MouseUtil.iss`'s `MyAppVersion` (currently `1.2.1`).
+`MouseUtil.csproj`'s `<Version>` and `MouseUtil.iss`'s `MyAppVersion` (currently `1.2.2`).
 
 ## Publish (portable folder, no installer)
 

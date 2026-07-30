@@ -197,13 +197,16 @@ public sealed class MouseAutomationEngine
                 return;
             }
 
+            // Started before firing, not after, so that Spin mode's blocking SpinSweep animation
+            // (~192ms) counts against the first inter-action gap instead of adding invisible extra
+            // time on top of it - see the main loop's intervalClock deadline below for the full reasoning.
+            var intervalClock = Stopwatch.StartNew();
+            var pauseClock = Stopwatch.StartNew();
             if (FireAndCheckActionCountStop())
             {
                 return;
             }
 
-            var remaining = interval;
-            var stillness = TimeSpan.Zero;
             var paused = false;
             var lastPos = NativeMethods.GetCursorPosition();
 
@@ -240,7 +243,7 @@ public sealed class MouseAutomationEngine
                     if (manualMovementDetected)
                     {
                         paused = true;
-                        stillness = TimeSpan.Zero;
+                        pauseClock.Restart();
 
                         // Reset the taskbar bar to full exactly once, right as pausing begins, then
                         // freeze it there - every other Paused report below omits progress (null) so it
@@ -251,21 +254,27 @@ public sealed class MouseAutomationEngine
                     }
                     else
                     {
-                        stillness += TimeSpan.FromMilliseconds(TickMilliseconds);
+                        // Elapsed-since-pause-started off a monotonic Stopwatch, not a nominal tick
+                        // count, so Task.Delay overshoot below can't make "stood still for a full
+                        // interval" take longer than the actual interval - and unlike DateTime.UtcNow,
+                        // a Stopwatch can't be thrown off by the system clock being adjusted mid-run.
+                        var stillness = pauseClock.Elapsed;
 
                         if (stillness >= interval)
                         {
                             // Stood still for the full interval: fire immediately, as if the timer had gone off,
                             // then start a fresh full-length countdown - never resume from where it froze.
+                            // Restarted before firing rather than after, so a blocking Spin sweep counts
+                            // against the new interval instead of adding on top of it - see the main loop's
+                            // intervalClock deadline below for the full reasoning.
                             paused = false;
-                            stillness = TimeSpan.Zero;
+                            intervalClock.Restart();
                             if (FireAndCheckActionCountStop())
                             {
                                 return;
                             }
 
                             lastPos = NativeMethods.GetCursorPosition();
-                            remaining = interval;
                             await Task.Delay(TickMilliseconds, token).ConfigureAwait(false);
                             continue;
                         }
@@ -285,19 +294,45 @@ public sealed class MouseAutomationEngine
                     continue;
                 }
 
+                // Deadline measured off a monotonic Stopwatch, not a nominal tick countdown, so
+                // Task.Delay overshoot (Windows timer resolution, ReportStatus/event dispatch time,
+                // etc.) can never compound into drift - each iteration re-derives "how long is left"
+                // from actual elapsed time instead of assuming exactly TickMilliseconds elapsed since
+                // the last one. Stopwatch (rather than DateTime.UtcNow) also means a system clock
+                // adjustment mid-run can't throw this off - it only ever measures elapsed ticks, never
+                // "what time is it".
+                var remaining = interval - intervalClock.Elapsed;
+                if (remaining < TimeSpan.Zero)
+                {
+                    remaining = TimeSpan.Zero;
+                }
+
                 var kind = remaining <= ImminentThreshold ? StatusKind.Imminent : StatusKind.Running;
                 var progress = remaining.TotalMilliseconds / interval.TotalMilliseconds;
                 ReportStatus(FormatCountdownStatus($"{verb} now", remaining, $"{verb} in {FormatSeconds(remaining)}"), kind, progress);
 
-                await Task.Delay(TickMilliseconds, token).ConfigureAwait(false);
-                remaining -= TimeSpan.FromMilliseconds(TickMilliseconds);
+                var sleepMs = (int)Math.Min(TickMilliseconds, remaining.TotalMilliseconds);
+                if (sleepMs > 0)
+                {
+                    await Task.Delay(sleepMs, token).ConfigureAwait(false);
+                }
 
-                if (remaining <= TimeSpan.Zero)
+                if (intervalClock.Elapsed >= interval)
                 {
                     if (token.IsCancellationRequested)
                     {
                         return;
                     }
+
+                    // Restarted before firing, not after: Click mode's action is two sub-millisecond
+                    // SendInput calls, but Spin mode's SpinSweep blocks synchronously for real wall-clock
+                    // time (SpinSteps * SpinStepDurationMs, ~192ms) to animate the cursor before
+                    // returning. If the restart happened after the action returned, that ~192ms would
+                    // never be subtracted from anything - it would be pure extra time stacked onto every
+                    // single cycle, on top of the deadline above. Restarting first anchors the Stopwatch's
+                    // zero-point to the moment we decide to fire, so the blocking time counts against the
+                    // *next* interval instead, keeping the gap between fires exactly equal to interval.
+                    intervalClock.Restart();
 
                     if (FireAndCheckActionCountStop())
                     {
@@ -305,7 +340,6 @@ public sealed class MouseAutomationEngine
                     }
 
                     lastPos = NativeMethods.GetCursorPosition();
-                    remaining = interval;
                 }
             }
         }
@@ -317,10 +351,18 @@ public sealed class MouseAutomationEngine
 
     private async Task<bool> RunStartupGraceAsync(DateTime? stopAt, CancellationToken token)
     {
-        var remaining = StartupGracePeriod;
+        // Monotonic Stopwatch deadline, not a nominal tick countdown - see RunLoopAsync's
+        // intervalClock for why.
+        var graceClock = Stopwatch.StartNew();
 
-        while (remaining > TimeSpan.Zero)
+        while (true)
         {
+            var remaining = StartupGracePeriod - graceClock.Elapsed;
+            if (remaining <= TimeSpan.Zero)
+            {
+                return true;
+            }
+
             if (token.IsCancellationRequested)
             {
                 return false;
@@ -334,11 +376,13 @@ public sealed class MouseAutomationEngine
 
             var startupProgress = remaining.TotalMilliseconds / StartupGracePeriod.TotalMilliseconds;
             ReportStatus(FormatCountdownStatus("Starting now", remaining, $"Starting in {FormatSeconds(remaining)}"), StatusKind.Starting, startupProgress);
-            await Task.Delay(TickMilliseconds, token).ConfigureAwait(false);
-            remaining -= TimeSpan.FromMilliseconds(TickMilliseconds);
-        }
 
-        return true;
+            var sleepMs = (int)Math.Min(TickMilliseconds, remaining.TotalMilliseconds);
+            if (sleepMs > 0)
+            {
+                await Task.Delay(sleepMs, token).ConfigureAwait(false);
+            }
+        }
     }
 
     private void FireAction(AutomationMode mode, CancellationToken token)
