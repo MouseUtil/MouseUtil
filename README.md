@@ -7,7 +7,8 @@ minimal interface.
 
 ### Download
 
-To download MouseUtil, head over to the [Releases](https://github.com/MouseUtil/MouseUtil/releases) page.
+To download MouseUtil, head over to the [Releases](https://github.com/MouseUtil/MouseUtil/releases)
+page and grab the MouseUtilSetup zip.
 
 ### Modes
 
