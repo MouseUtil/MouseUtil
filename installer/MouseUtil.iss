@@ -9,7 +9,7 @@
 ; Output installer is written to installer\Output\MouseUtilSetup.exe
 
 #define MyAppName "MouseUtil"
-#define MyAppVersion "1.2.2"
+#define MyAppVersion "1.3.0"
 #define MyAppPublisher "MouseUtil"
 #define MyAppExeName "MouseUtil.exe"
 #define MyBuildOutputDir "..\bin\x64\Release\net8.0-windows10.0.19041.0\win-x64"
@@ -33,7 +33,7 @@ SetupIconFile=..\Assets\installer.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2
 SolidCompression=yes
-WizardStyle=modern
+WizardStyle=modern dynamic
 DisableProgramGroupPage=yes
 DisableWelcomePage=no
 
