@@ -45,6 +45,12 @@ internal static class NativeMethods
     public const uint WM_RBUTTONUP = 0x0205;
     public const uint WM_CONTEXTMENU = 0x007B;
 
+    // Broadcast by Windows when a system-wide setting changes, including the taskbar/tray
+    // light-vs-dark theme (Settings > Personalization > Colors) - see TrayIconService's
+    // WM_SETTINGCHANGE handler, which checks lParam for "ImmersiveColorSet" to detect that specific
+    // change and re-picks the inactive-state tray icon to match live, without a restart.
+    public const uint WM_SETTINGCHANGE = 0x001A;
+
     public const uint NIM_ADD = 0x00000000;
     public const uint NIM_MODIFY = 0x00000001;
     public const uint NIM_DELETE = 0x00000002;
@@ -59,6 +65,11 @@ internal static class NativeMethods
     public const int SM_CYSMICON = 50;
 
     public const uint MF_STRING = 0x00000000;
+    public const uint MF_ENABLED = 0x00000000;
+    public const uint MF_UNCHECKED = 0x00000000;
+    public const uint MF_GRAYED = 0x00000001;
+    public const uint MF_CHECKED = 0x00000008;
+    public const uint MF_SEPARATOR = 0x00000800;
     public const uint TPM_RIGHTBUTTON = 0x0002;
     public const uint TPM_RETURNCMD = 0x0100;
 

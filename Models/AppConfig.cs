@@ -39,4 +39,22 @@ public sealed class AppConfig
     // on the app's taskbar icon (via ITaskbarList3 - see Services/TaskbarProgressService), the same
     // mechanism installers use. Turns amber/yellow automatically while paused (pause-on-movement).
     public bool ShowTaskbarProgress { get; set; } = false;
+
+    // Default OFF: when true, MainWindow silently checks GitHub Releases for a newer build once at
+    // startup (see MainWindow.InitializeAutoUpdateCheck) - if one's found, an accent-colored download
+    // icon appears next to SettingsButton. Independent of Settings' own "Check for updates" button,
+    // which always starts idle regardless of what this found - see SettingsPanel.UpdateChecker's
+    // doc comment for why the two share the same underlying UpdateService but not UI state.
+    public bool AutoCheckForUpdates { get; set; } = false;
+
+    // Default OFF: whether Advanced interval display mode (the Hours/Minutes/Seconds/Milliseconds
+    // fields, replacing the plain Minutes/Seconds ones) is currently active - unlike
+    // _isRandomizeIntervalEnabled (which is deliberately never persisted, always starting Off), this
+    // one IS persisted, and IS the actual source of truth restored into
+    // _isAdvancedIntervalDisplayEnabled at startup (see MainWindow.LoadConfigIntoUi/
+    // UpdateAdvancedIntervalDisplayMode). Owned and edited exclusively by SettingsPanel's "Display
+    // advanced interval" toggle - there used to also be an AdvancedIntervalDisplayButton
+    // directly in the Interval card for this, but it was removed entirely (not just hidden) in favor
+    // of controlling this from Settings only.
+    public bool ShowAdvancedIntervalDisplay { get; set; } = false;
 }

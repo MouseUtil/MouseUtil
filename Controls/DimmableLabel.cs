@@ -27,19 +27,21 @@ namespace MouseUtil.Controls;
 /// not wire that up automatically for arbitrary custom controls either.
 ///
 /// Also resyncs on every <see cref="FrameworkElement.Loaded"/>, not just the first
-/// <see cref="OnApplyTemplate"/> - this matters for an instance living inside a Flyout/Popup (e.g.
-/// HotkeyCaptionTextBlock in MainWindow.xaml, inside SettingsFlyout): OnApplyTemplate only ever runs
-/// ONCE per instance, the first time it's ever realized, but a Flyout's content is disconnected from
-/// the live visual tree every time it closes and reconnected (raising Loaded again) every time it
-/// reopens. A GoToState call made via IsEnabledChanged while the Flyout is closed does not reliably
-/// stick - there's nothing rendering the transition - so without this, an instance whose IsEnabled
-/// flips while its Flyout happens to be closed (the overwhelmingly common case - closing the Flyout
-/// is exactly how the user gets back to the Start/Stop button) would keep showing whatever state
-/// happened to be applied the very first time it was ever shown, indefinitely. Re-running
-/// UpdateVisualState on every Loaded re-reads the CURRENT IsEnabled and re-applies the correct look
-/// immediately whenever the label becomes visible again, regardless of how it got there. A label that
-/// is never inside a closable container (e.g. IntervalCaptionTextBlock, always part of the main
-/// window's permanently-live content) never hits this path and is unaffected either way.
+/// <see cref="OnApplyTemplate"/> - this matters for an instance living inside a Flyout/Popup:
+/// OnApplyTemplate only ever runs ONCE per instance, the first time it's ever realized, but a
+/// Flyout's content is disconnected from the live visual tree every time it closes and reconnected
+/// (raising Loaded again) every time it reopens. A GoToState call made via IsEnabledChanged while the
+/// Flyout is closed does not reliably stick - there's nothing rendering the transition - so without
+/// this, an instance whose IsEnabled flips while its Flyout happens to be closed would keep showing
+/// whatever state happened to be applied the very first time it was ever shown, indefinitely.
+/// Re-running UpdateVisualState on every Loaded re-reads the CURRENT IsEnabled and re-applies the
+/// correct look immediately whenever the label becomes visible again, regardless of how it got there.
+/// A label that is never inside a closable container (e.g. IntervalCaptionTextBlock, always part of
+/// the main window's permanently-live content, or HotkeyCaptionTextBlock/other DimmableLabels in
+/// Controls/SettingsPanel.xaml, now hosted in a Visibility-toggled Grid rather than a Flyout - toggling
+/// Visibility does not disconnect/reconnect from the tree, so Loaded never refires for it either) never
+/// hits this path and is unaffected either way. No current DimmableLabel instance actually lives
+/// inside a Flyout/Popup any more, but the resync is harmless to keep for whenever one does.
 /// </summary>
 public sealed class DimmableLabel : Control
 {

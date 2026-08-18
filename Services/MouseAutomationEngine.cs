@@ -69,6 +69,14 @@ public sealed class MouseAutomationEngine
     private static readonly TimeSpan StillnessDisplayThreshold = TimeSpan.FromSeconds(5);
     private const int TickMilliseconds = 100;
 
+    // Randomize-interval bounds (see GetEffectiveInterval): the randomized draw's floor is whichever
+    // is larger, 10% of the configured interval or this absolute minimum - at short configured
+    // intervals, 10% alone could fall below Spin mode's own ~192ms blocking SpinSweep animation
+    // (SpinSteps * SpinStepDurationMs), which would mean the "gap" between actions is sometimes
+    // entirely consumed by the animation itself, firing back-to-back with no visible gap at all.
+    private const double RandomizeIntervalMinPercent = 0.10;
+    private static readonly TimeSpan RandomizeIntervalMinFloor = TimeSpan.FromMilliseconds(250);
+
     // Below this, the countdown's last "in 0.1s" tick is replaced by "Starting now" / "Clicking
     // now" / "Spinning now" instead - see FormatCountdownStatus. Purely a status-text display
     // choice; never affects when the next action actually fires.
@@ -117,8 +125,15 @@ public sealed class MouseAutomationEngine
     /// MainWindow.HotkeyService_HotkeyPressed), which performs the first action immediately instead
     /// of waiting, unlike a normal Start-button press. Spin mode always skips the countdown
     /// regardless of this flag - see the needsStartupGrace check in RunLoopAsync.
+    ///
+    /// randomizeInterval, when true, draws a fresh random gap (see GetEffectiveInterval) uniformly
+    /// between a floor and interval (used as-is as the maximum) at the start of every normal cycle,
+    /// instead of firing at a fixed interval every time. This never affects the Spin-mode
+    /// pause-on-movement resume threshold, which always waits for the full configured interval
+    /// regardless of randomizeInterval - that wait needs to stay predictable since it's a direct
+    /// reaction to the user's own mouse movement, not part of the automated cadence.
     /// </summary>
-    public void Start(AutomationMode mode, TimeSpan interval, DateTime? stopAt, int? stopAfterActionCount, bool pauseOnMovementEnabled, bool skipStartupCountdown = false)
+    public void Start(AutomationMode mode, TimeSpan interval, DateTime? stopAt, int? stopAfterActionCount, bool pauseOnMovementEnabled, bool randomizeInterval, bool skipStartupCountdown = false)
     {
         lock (_gate)
         {
@@ -142,7 +157,7 @@ public sealed class MouseAutomationEngine
 
             var cts = new CancellationTokenSource();
             _cts = cts;
-            _loopTask = Task.Run(() => RunLoopAsync(mode, interval, stopAt, stopAfterActionCount, pauseOnMovementEnabled, skipStartupCountdown, cts.Token), cts.Token);
+            _loopTask = Task.Run(() => RunLoopAsync(mode, interval, stopAt, stopAfterActionCount, pauseOnMovementEnabled, randomizeInterval, skipStartupCountdown, cts.Token), cts.Token);
         }
     }
 
@@ -160,7 +175,7 @@ public sealed class MouseAutomationEngine
         cts?.Cancel();
     }
 
-    private async Task RunLoopAsync(AutomationMode mode, TimeSpan interval, DateTime? stopAt, int? stopAfterActionCount, bool pauseOnMovementEnabled, bool skipStartupCountdown, CancellationToken token)
+    private async Task RunLoopAsync(AutomationMode mode, TimeSpan interval, DateTime? stopAt, int? stopAfterActionCount, bool pauseOnMovementEnabled, bool randomizeInterval, bool skipStartupCountdown, CancellationToken token)
     {
         // Counts actions fired during this run so far, checked against stopAfterActionCount right
         // after each FireAction call (as opposed to IsStopTimeReached below, which is checked BEFORE
@@ -202,6 +217,15 @@ public sealed class MouseAutomationEngine
             // time on top of it - see the main loop's intervalClock deadline below for the full reasoning.
             var intervalClock = Stopwatch.StartNew();
             var pauseClock = Stopwatch.StartNew();
+
+            // The actual gap this cycle waits for - equal to interval when randomizeInterval is off,
+            // or a fresh random draw (see GetEffectiveInterval) otherwise. Redrawn every time
+            // intervalClock.Restart() marks the start of a new cycle (both below and in the
+            // pause-resume-then-fire path above), but never touched by the pause-on-movement
+            // stillness threshold itself, which always compares against the raw configured interval -
+            // see Start's own doc comment for why that stays predictable regardless of this setting.
+            var effectiveInterval = GetEffectiveInterval(interval, randomizeInterval);
+
             if (FireAndCheckActionCountStop())
             {
                 return;
@@ -269,6 +293,7 @@ public sealed class MouseAutomationEngine
                             // intervalClock deadline below for the full reasoning.
                             paused = false;
                             intervalClock.Restart();
+                            effectiveInterval = GetEffectiveInterval(interval, randomizeInterval);
                             if (FireAndCheckActionCountStop())
                             {
                                 return;
@@ -301,14 +326,14 @@ public sealed class MouseAutomationEngine
                 // the last one. Stopwatch (rather than DateTime.UtcNow) also means a system clock
                 // adjustment mid-run can't throw this off - it only ever measures elapsed ticks, never
                 // "what time is it".
-                var remaining = interval - intervalClock.Elapsed;
+                var remaining = effectiveInterval - intervalClock.Elapsed;
                 if (remaining < TimeSpan.Zero)
                 {
                     remaining = TimeSpan.Zero;
                 }
 
                 var kind = remaining <= ImminentThreshold ? StatusKind.Imminent : StatusKind.Running;
-                var progress = remaining.TotalMilliseconds / interval.TotalMilliseconds;
+                var progress = remaining.TotalMilliseconds / effectiveInterval.TotalMilliseconds;
                 ReportStatus(FormatCountdownStatus($"{verb} now", remaining, $"{verb} in {FormatSeconds(remaining)}"), kind, progress);
 
                 var sleepMs = (int)Math.Min(TickMilliseconds, remaining.TotalMilliseconds);
@@ -317,7 +342,7 @@ public sealed class MouseAutomationEngine
                     await Task.Delay(sleepMs, token).ConfigureAwait(false);
                 }
 
-                if (intervalClock.Elapsed >= interval)
+                if (intervalClock.Elapsed >= effectiveInterval)
                 {
                     if (token.IsCancellationRequested)
                     {
@@ -331,8 +356,11 @@ public sealed class MouseAutomationEngine
                     // never be subtracted from anything - it would be pure extra time stacked onto every
                     // single cycle, on top of the deadline above. Restarting first anchors the Stopwatch's
                     // zero-point to the moment we decide to fire, so the blocking time counts against the
-                    // *next* interval instead, keeping the gap between fires exactly equal to interval.
+                    // *next* interval instead, keeping the gap between fires exactly equal to
+                    // effectiveInterval. Redrawn right alongside the restart - this is the start of a
+                    // brand new cycle, which gets its own fresh random draw.
                     intervalClock.Restart();
+                    effectiveInterval = GetEffectiveInterval(interval, randomizeInterval);
 
                     if (FireAndCheckActionCountStop())
                     {
@@ -467,10 +495,54 @@ public sealed class MouseAutomationEngine
 
     private static bool IsStopTimeReached(DateTime? stopAt) => stopAt.HasValue && DateTime.Now >= stopAt.Value;
 
+    /// <summary>
+    /// Returns <paramref name="interval"/> unchanged when <paramref name="randomize"/> is false.
+    /// Otherwise draws a uniformly random value in [floor, interval], where floor is the larger of
+    /// RandomizeIntervalMinPercent of interval or RandomizeIntervalMinFloor - see that constant's own
+    /// comment for why an absolute floor matters even for short configured intervals. If interval
+    /// itself is already at or below that floor, there's no meaningful range left to randomize
+    /// within, so interval is returned as-is rather than risk drawing something larger than what the
+    /// user actually configured.
+    /// </summary>
+    private static TimeSpan GetEffectiveInterval(TimeSpan interval, bool randomize)
+    {
+        if (!randomize)
+        {
+            return interval;
+        }
+
+        var floorMs = Math.Max(RandomizeIntervalMinFloor.TotalMilliseconds, interval.TotalMilliseconds * RandomizeIntervalMinPercent);
+        if (floorMs >= interval.TotalMilliseconds)
+        {
+            return interval;
+        }
+
+        var rangeMs = interval.TotalMilliseconds - floorMs;
+        var drawnMs = floorMs + Random.Shared.NextDouble() * rangeMs;
+        return TimeSpan.FromMilliseconds(drawnMs);
+    }
+
+    /// <summary>
+    /// Formats a countdown for status text - plain "Ns"/"N.Ns" under a minute (unchanged from
+    /// before), "Nm Ns" from a minute up to an hour, and "Nh Nm Ns" at an hour or beyond, e.g. 90s
+    /// -> "1m 30s", 3900s -> "1h 5m 0s". Purely a display choice - the underlying countdown value
+    /// and its tick rate are untouched, this only changes how it's rendered once it gets long
+    /// enough that reading raw seconds becomes hard to parse at a glance.
+    /// </summary>
     private static string FormatSeconds(TimeSpan t)
     {
-        var seconds = Math.Max(0, t.TotalSeconds);
-        return seconds < 10 ? $"{seconds:0.0}s" : $"{Math.Ceiling(seconds):0}s";
+        var totalSeconds = Math.Max(0, t.TotalSeconds);
+        if (totalSeconds < 60)
+        {
+            return totalSeconds < 10 ? $"{totalSeconds:0.0}s" : $"{Math.Ceiling(totalSeconds):0}s";
+        }
+
+        var wholeSeconds = (long)Math.Ceiling(totalSeconds);
+        var hours = wholeSeconds / 3600;
+        var minutes = wholeSeconds % 3600 / 60;
+        var seconds = wholeSeconds % 60;
+
+        return hours > 0 ? $"{hours}h {minutes}m {seconds}s" : $"{minutes}m {seconds}s";
     }
 
     /// <summary>

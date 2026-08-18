@@ -77,6 +77,22 @@ public sealed class GlobalHotkeyService : IDisposable
     }
 
     /// <summary>
+    /// Unregisters the current hotkey, if any, without registering a replacement - leaves nothing
+    /// registered until the next TryRegister. Used while the user is capturing a new hotkey in
+    /// Settings: RegisterHotKey normally intercepts its key combination at the OS level and delivers
+    /// WM_HOTKEY instead of a normal keystroke, so without this, pressing the *current* hotkey while
+    /// recording would fire HotkeyPressed instead of reaching HotkeyButton_KeyDown.
+    /// </summary>
+    public void Unregister()
+    {
+        if (_isRegistered)
+        {
+            NativeMethods.UnregisterHotKey(_hwnd, HotkeyId);
+            _isRegistered = false;
+        }
+    }
+
+    /// <summary>
     /// Registers <paramref name="handler"/> to run whenever this window's subclassed WndProc observes
     /// <paramref name="message"/> - e.g. SingleInstanceService.ShowWindowMessageId, invoked when a
     /// second launch attempt signals this instance to come to the foreground. Runs on the UI thread,

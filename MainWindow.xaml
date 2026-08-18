@@ -7,12 +7,9 @@
 
     <Grid x:Name="RootGrid">
         <Grid.Resources>
-            <Style x:Key="CardBorderStyle" TargetType="Border">
-                <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
-                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
-                <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="8" />
-            </Style>
+            <!-- CardBorderStyle now lives in App.xaml (Application.Resources) so it's also reachable
+                 from Controls/SettingsPanel.xaml, a separate UserControl that can't see this Grid's
+                 local resources. -->
 
             <!-- IntervalCaptionTextBlock's style: a fixed "INTERVAL" caption label whose Foreground
                  dims via a real Normal/Disabled VisualState transition (see DimmableLabel) instead of
@@ -27,91 +24,6 @@
                                 Style="{StaticResource CaptionTextBlockStyle}"
                                 Opacity="0.6"
                                 CharacterSpacing="80"
-                                Foreground="{ThemeResource TextFillColorPrimaryBrush}">
-                                <VisualStateManager.VisualStateGroups>
-                                    <VisualStateGroup x:Name="CommonStates">
-                                        <VisualState x:Name="Normal" />
-                                        <VisualState x:Name="Disabled">
-                                            <VisualState.Setters>
-                                                <Setter Target="CaptionPresenter.Foreground" Value="{ThemeResource TextFillColorDisabledBrush}" />
-                                            </VisualState.Setters>
-                                        </VisualState>
-                                    </VisualStateGroup>
-                                </VisualStateManager.VisualStateGroups>
-                            </TextBlock>
-                        </ControlTemplate>
-                    </Setter.Value>
-                </Setter>
-            </Style>
-
-            <!-- HotkeyCaptionTextBlock's style: same Normal/Disabled VisualState mechanism as
-                 IntervalCaptionLabelStyle above, just without the caption-text styling (matches this
-                 label's previous plain-TextBlock look, which had no CaptionTextBlockStyle/Opacity). -->
-            <Style x:Key="HotkeyCaptionLabelStyle" TargetType="controls:DimmableLabel">
-                <Setter Property="Template">
-                    <Setter.Value>
-                        <ControlTemplate TargetType="controls:DimmableLabel">
-                            <TextBlock
-                                x:Name="CaptionPresenter"
-                                Text="Start/Stop Hotkey"
-                                Foreground="{ThemeResource TextFillColorPrimaryBrush}">
-                                <VisualStateManager.VisualStateGroups>
-                                    <VisualStateGroup x:Name="CommonStates">
-                                        <VisualState x:Name="Normal" />
-                                        <VisualState x:Name="Disabled">
-                                            <VisualState.Setters>
-                                                <Setter Target="CaptionPresenter.Foreground" Value="{ThemeResource TextFillColorDisabledBrush}" />
-                                            </VisualState.Setters>
-                                        </VisualState>
-                                    </VisualStateGroup>
-                                </VisualStateManager.VisualStateGroups>
-                            </TextBlock>
-                        </ControlTemplate>
-                    </Setter.Value>
-                </Setter>
-            </Style>
-
-            <!-- ShowActionCounterCaption/PauseOnMovementCaption's style: same Normal/Disabled
-                 VisualState mechanism as HotkeyCaptionLabelStyle above. These two toggle rows are
-                 disabled (SetInputsEnabled) while automation is running, so their labels need the same
-                 DimmableLabel treatment as IntervalCaptionTextBlock/HotkeyCaptionTextBlock - a plain
-                 TextBlock sibling of the ToggleSwitch doesn't dim on its own, since it isn't a
-                 descendant of the switch's own template/VisualStateManager. CloseToTrayToggle's row
-                 label deliberately stays a plain TextBlock - that toggle is never disabled while
-                 running, so it never needs a Disabled look. -->
-            <Style x:Key="ShowActionCounterCaptionLabelStyle" TargetType="controls:DimmableLabel">
-                <Setter Property="Template">
-                    <Setter.Value>
-                        <ControlTemplate TargetType="controls:DimmableLabel">
-                            <TextBlock
-                                x:Name="CaptionPresenter"
-                                Text="Show click/spin counter"
-                                TextWrapping="Wrap"
-                                Foreground="{ThemeResource TextFillColorPrimaryBrush}">
-                                <VisualStateManager.VisualStateGroups>
-                                    <VisualStateGroup x:Name="CommonStates">
-                                        <VisualState x:Name="Normal" />
-                                        <VisualState x:Name="Disabled">
-                                            <VisualState.Setters>
-                                                <Setter Target="CaptionPresenter.Foreground" Value="{ThemeResource TextFillColorDisabledBrush}" />
-                                            </VisualState.Setters>
-                                        </VisualState>
-                                    </VisualStateGroup>
-                                </VisualStateManager.VisualStateGroups>
-                            </TextBlock>
-                        </ControlTemplate>
-                    </Setter.Value>
-                </Setter>
-            </Style>
-
-            <Style x:Key="PauseOnMovementCaptionLabelStyle" TargetType="controls:DimmableLabel">
-                <Setter Property="Template">
-                    <Setter.Value>
-                        <ControlTemplate TargetType="controls:DimmableLabel">
-                            <TextBlock
-                                x:Name="CaptionPresenter"
-                                Text="Pause spinning on movement"
-                                TextWrapping="Wrap"
                                 Foreground="{ThemeResource TextFillColorPrimaryBrush}">
                                 <VisualStateManager.VisualStateGroups>
                                     <VisualStateGroup x:Name="CommonStates">
@@ -222,7 +134,7 @@
         </Grid>
 
         <!-- Everything below the title bar: padded/inset from the window edges. -->
-        <Grid Grid.Row="1" Padding="24,16,24,24">
+        <Grid x:Name="MainContentGrid" Grid.Row="1" Padding="24,16,24,24">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -233,21 +145,202 @@
             </Grid.RowDefinitions>
 
             <!-- Interval card -->
-            <Border Grid.Row="0" Style="{StaticResource CardBorderStyle}" Margin="0,0,0,16">
-                <StackPanel Padding="20" Spacing="12">
-                    <controls:DimmableLabel x:Name="IntervalCaptionTextBlock" Style="{StaticResource IntervalCaptionLabelStyle}" />
-                    <Grid ColumnSpacing="12">
+            <!-- MinHeight="130" pins this card (and, transitively, everything below it, since
+                 MainContentGrid's row for this card is Height="Auto") to its natural height in Basic
+                 mode - the taller of Basic/Advanced - measured empirically via UI automation on a
+                 freshly-launched Release build (129px) plus 1px of extra breathing room. This is the
+                 floor that stops the card from ever shrinking below that height; see the Grid inside
+                 for how the Basic/Advanced height difference itself is absorbed. -->
+            <Border Grid.Row="0" Style="{StaticResource CardBorderStyle}" Padding="20" MinHeight="130" Margin="0,0,0,16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" MinHeight="12" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <!-- Header row: "INTERVAL" caption plus the randomize-interval toggle, pinned to
+                         the row's right edge via the "*"/Auto column split (same pattern as
+                         SettingsOverlay's own Back-button/version-text header row). -->
+                    <Grid Grid.Row="0" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <controls:DimmableLabel
+                            x:Name="IntervalCaptionTextBlock"
+                            Grid.Column="0"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource IntervalCaptionLabelStyle}" />
+
+                        <!-- Randomize-interval toggle: a real ToggleButton, so IsChecked is the actual
+                             on/off source of truth (synced into _isRandomizeIntervalEnabled from the
+                             Checked/Unchecked handlers in code-behind) rather than a Click handler
+                             flipping a bool and recoloring the icon as the only visible state. Background/
+                             BorderBrush stay Transparent with BorderThickness="1" (not 0) so the default
+                             ControlTemplate's PointerOver state still has something to render into while
+                             Unchecked, matching SettingsBackButton/ModeSwitchButton's own transparent-
+                             chrome pattern elsewhere in this file.
+
+                             ToggleButton.Resources overrides ToggleButtonBackgroundDisabled/
+                             ToggleButtonBorderBrushDisabled to Transparent, which covers the
+                             Unchecked+Disabled/locked-while-off case: with randomize-interval Off and a
+                             run in progress, there's nothing to indicate, so the chrome must stay fully
+                             invisible, same as before.
+
+                             Checked+Disabled/locked-while-on is drawn as an outline rather than a filled
+                             pill, so the setting still reads as "on" at a glance without looking like an
+                             actionable filled control while it's locked: ToggleButtonBackgroundCheckedDisabled
+                             is overridden to Transparent (same as the Unchecked case), and
+                             ToggleButtonBorderBrushCheckedDisabled is aliased to AccentFillColorDisabledBrush
+                             - confirmed by reading its Color value in generic.xaml, this key is a
+                             theme-neutral translucent overlay (#28FFFFFF in Dark, #37000000 in Light -
+                             white/black at low alpha, NOT a desaturated accent hue), so the resulting
+                             stroke is already native and theme-correct with zero code-behind involvement,
+                             the same gray tone that was previously used to fill the whole pill, now drawn
+                             as the 1px stroke (BorderThickness="1" above) instead. RandomizeIntervalIcon.Opacity
+                             is dimmed to 0.6 whenever locked, regardless of Checked state (see
+                             UpdateRandomizeIntervalIndicator, which owns Opacity as well as Foreground)
+                             so the icon reads as settled/locked rather than interactive - this button's
+                             own outline above is what communicates on/off while locked, not the icon.
+
+                             The icon's Foreground is never left to inherit from the ContentPresenter (the
+                             default ControlTemplate's Checked VisualState re-targets the ContentPresenter's
+                             Foreground to ToggleButtonForegroundChecked, i.e. TextOnAccentFillColorPrimaryBrush,
+                             which FontIcon.Foreground would otherwise silently inherit) - instead
+                             UpdateRandomizeIntervalIndicator always sets explicit local Foreground/Opacity
+                             values from code, in three distinct combinations: OnAccentBrushSource
+                             (TextOnAccentFillColorPrimaryBrush) at Opacity 1 only while Checked AND
+                             enabled, since that color is tuned to sit on the accent-filled pill above,
+                             which only exists in that exact state; DisabledBrushSource
+                             (TextFillColorDisabledBrush) at Opacity 0.6 whenever locked, regardless of
+                             Checked state, matching IntervalCaptionLabelStyle's own Disabled look -
+                             deliberately identical for Locked+Checked and Locked+Unchecked (see that
+                             method's doc comment for why: this used to differ, but a second button that
+                             briefly existed here (AdvancedIntervalDisplayButton, since removed - see
+                             SettingsPanel's "Display advanced interval" toggle instead) made the
+                             difference read as an unexplained "why is one brighter" instead of a useful
+                             signal - the fix stayed even after that button did not); and
+                             PrimaryBrushSource (TextFillColorPrimaryBrush, matching
+                             IntervalCaptionTextBlock's own base color) at Opacity 1 while idle (Unchecked
+                             and enabled, so the icon still reads as interactive rather than a plain
+                             label) - keeping OnAccentBrushSource for the locked cases would also be
+                             wrong regardless of the above, since the pill background goes Transparent
+                             once locked (see ToggleButtonBackgroundCheckedDisabled above) and that
+                             brush's accent-contrast color would render illegibly against the app's own
+                             background instead. So the glyph is either genuinely dark-on-accent-pill /
+                             light-on-accent-pill while sitting on that pill, dimmed to match the
+                             "INTERVAL" caption's own disabled look while locked, or matching the app's
+                             own text color while idle (theme-correct, never a color that depends on
+                             ContentPresenter inheritance).
+
+                             MinWidth="0"/MinHeight="0" override the default ToggleButton style's own
+                             minimum size, and Height="16" pins the button to (approximately)
+                             IntervalCaptionTextBlock's own natural line height, tuned by eye/measurement
+                             against a before/after screenshot comparison - without this, the button
+                             would be taller than the plain caption text used to be, and since a Grid
+                             row's height is the max of its children's, this header row would end up
+                             taller than it used to be, pushing every row below it down by a few pixels
+                             even though nothing else on the card changed.
+
+                             The ToggleButton's own RenderTransform (ScaleTransform 1.5x, origin 0.5,0.5)
+                             makes its hover/pressed/checked chrome - and its actual hit-test area, since
+                             WinUI hit-tests against post-transform bounds - visibly bigger and easier to
+                             click, without touching layout at all: RenderTransform is a render-only,
+                             post-Arrange transform, so it can't feed back into the Grid's row-height/
+                             column-width measurement the way Height/Padding above do. RandomizeIntervalIcon's
+                             own RenderTransform is the exact reciprocal (1/1.5), which cancels the parent's
+                             scale back out - DefaultToggleButtonStyle's ControlTemplate renders this FontIcon
+                             as the Content of the same ContentPresenter the chrome is drawn on, sharing
+                             one center point, so composing the two scales nets to "chrome renders at
+                             1.5x, icon renders at its original 14px size, both still centered on the
+                             same point". Keep this second ScaleTransform's value as the literal
+                             mathematical reciprocal of the first (not a rounded guess), or the icon will
+                             drift slightly off its original rendered size. -->
+                        <ToggleButton
+                            x:Name="RandomizeIntervalButton"
+                            Grid.Column="1"
+                            Padding="0"
+                            Height="16"
+                            MinWidth="0"
+                            MinHeight="0"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            RenderTransformOrigin="0.5,0.5"
+                            Background="Transparent"
+                            BorderThickness="1"
+                            BorderBrush="Transparent"
+                            Checked="RandomizeIntervalButton_CheckedChanged"
+                            Unchecked="RandomizeIntervalButton_CheckedChanged"
+                            AutomationProperties.AutomationId="RandomizeIntervalButton"
+                            AutomationProperties.Name="Randomize interval, Off"
+                            ToolTipService.ToolTip="Randomize interval: Off">
+                            <ToggleButton.RenderTransform>
+                                <ScaleTransform ScaleX="1.5" ScaleY="1.5" />
+                            </ToggleButton.RenderTransform>
+                            <ToggleButton.Resources>
+                                <SolidColorBrush x:Key="ToggleButtonBackgroundDisabled" Color="Transparent" />
+                                <SolidColorBrush x:Key="ToggleButtonBorderBrushDisabled" Color="Transparent" />
+                                <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedDisabled" Color="Transparent" />
+                                <!-- Deliberately a SolidColorBrush with a ThemeResource-bound Color, not
+                                     <StaticResource ResourceKey="AccentFillColorDisabledBrush" /> - that
+                                     alias form resolves once at load and never re-evaluates on a live
+                                     theme switch (StaticResource is a one-time lookup; only ThemeResource
+                                     re-resolves on ActualThemeChanged), so the border would silently keep
+                                     whichever theme's color happened to be active when the ToggleButton
+                                     was first realized. Binding Color via {ThemeResource
+                                     AccentFillColorDisabled} (the underlying Color, not the Brush key)
+                                     keeps it live, the same way PrimaryBrushSource/OnAccentBrushSource/
+                                     DisabledBrushSource's Foreground properties below stay live for the
+                                     icon. -->
+                                <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedDisabled" Color="{ThemeResource AccentFillColorDisabled}" />
+                            </ToggleButton.Resources>
+                            <FontIcon
+                                x:Name="RandomizeIntervalIcon"
+                                Glyph="&#xE8B1;"
+                                FontSize="14"
+                                RenderTransformOrigin="0.5,0.5">
+                                <FontIcon.RenderTransform>
+                                    <ScaleTransform ScaleX="0.66666667" ScaleY="0.66666667" />
+                                </FontIcon.RenderTransform>
+                            </FontIcon>
+                        </ToggleButton>
+                    </Grid>
+
+                    <!-- Basic Minutes/Seconds row - unchanged internally, just named so
+                         UpdateAdvancedIntervalDisplayMode can toggle its Visibility opposite
+                         AdvancedIntervalRow below. SecondsBox.Maximum is 59.999 (not 59.95) so a
+                         combined Seconds+Milliseconds value entered in the advanced row (up to 59.999)
+                         round-trips into this box without NumberBox's own Maximum clamping silently
+                         losing up to 49ms of precision. MinutesBox.Maximum is 99999959 (not
+                         100000000) so that 1,666,665h + 59m + 59s + 999ms (AdvancedIntervalRow's own
+                         maxed-out combination below) converts to exactly 99,999,959m + 59.999s here -
+                         the two rows' maximums are deliberately consistent with each other. Neither box
+                         allows decimals/extra-fraction-digit input to actually stick in .Value though -
+                         MinutesBox truncates (floors) any fractional part and SecondsBox truncates
+                         beyond 3 decimal places, both on commit (IntervalBox_ValueChanged) and, for
+                         hotkey-triggered starts that never commit/blur, on every keystroke
+                         (ReadCommittedOrTypedValue) - see both methods' doc comments. -->
+                    <Grid x:Name="BasicIntervalRow" Grid.Row="2" ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
+                        <!-- Maximum is deliberately NOT declared here as a XAML attribute - confirmed
+                             empirically that WinUI's XAML compiler round-trips large double attribute
+                             values through a 32-bit float somewhere in its compiled binary (XBF)
+                             encoding, and 99999959 (~1e8, above float32's exact-integer range of 2^24 =
+                             16,777,216) silently became 99999960 at runtime as a result (off by one -
+                             confirmed by reading sender.Maximum back at runtime, not assumed). Set
+                             precisely in the constructor instead (see MainWindow() - MinutesBox.Maximum
+                             = 99999959d), which is a plain C# double assignment with no such precision
+                             loss. HoursBox/AdvancedMinutesBox/AdvancedSecondsBox/MillisecondsBox's own
+                             Maximums below are all comfortably under 2^24 so don't need this workaround. -->
                         <NumberBox
                             x:Name="MinutesBox"
                             Grid.Column="0"
                             Header="Minutes"
                             HorizontalAlignment="Stretch"
                             Minimum="0"
-                            Maximum="100000000"
                             SmallChange="1"
                             LargeChange="5"
                             SpinButtonPlacementMode="Compact"
@@ -259,14 +352,119 @@
                             Header="Seconds"
                             HorizontalAlignment="Stretch"
                             Minimum="0"
-                            Maximum="59.95"
+                            Maximum="59.999"
                             SmallChange="1"
                             LargeChange="5"
                             SpinButtonPlacementMode="Compact"
                             ValueChanged="IntervalBox_ValueChanged"
                             AutomationProperties.AutomationId="SecondsBox" />
                     </Grid>
-                </StackPanel>
+
+                    <!-- Advanced Hours/Minutes/Seconds/Milliseconds row - Collapsed initially in XAML,
+                         reconciled against the persisted config.ShowAdvancedIntervalDisplay setting at
+                         startup by UpdateAdvancedIntervalDisplayMode (called from LoadConfigIntoUi), so
+                         it may end up Visible immediately if that setting was last left on. These are
+                         NumberBox (not plain TextBox), each with its own Minimum/Maximum declared here -
+                         Hours<=1,666,665, Minutes/Seconds<=59, Milliseconds<=999 (deliberately
+                         consistent with BasicIntervalRow's MinutesBox.Maximum="99999959" above - see
+                         that row's own comment) - but confirmed empirically (not assumed) that
+                         NumberBox does NOT actually clamp typed/committed text to these bounds on its
+                         own: Minimum/Maximum only constrain the (hidden, here) spin buttons/arrow keys.
+                         The actual clamping (plus truncation - see below) happens explicitly in code,
+                         in AdvancedIntervalBox_ValueChanged. SpinButtonPlacementMode="Hidden" hides the
+                         spin-button arrows entirely (unlike "Compact", which would pop a floating
+                         spinner on focus/hover) so these four still read as plain narrow text fields
+                         visually. No decimals stick in .Value either - truncated (floored) to a whole
+                         number on commit, in that same AdvancedIntervalBox_ValueChanged handler - and
+                         none of this is wired through XAML TextChanged anymore: the live,
+                         every-keystroke sync back into
+                         MinutesBox.Value/SecondsBox.Value (still the only thing
+                         PowerToggleButton_Checked ever reads at Start time, including for
+                         hotkey-triggered starts that never blur any field) instead hooks each box's own
+                         inner "InputBox" TextBox part directly once its template loads - see
+                         InitializeAdvancedIntervalLiveSync/AdvancedIntervalInputBox_TextChanged - since
+                         NumberBox.ValueChanged only fires on commit, not on every keystroke, and a
+                         hotkey press never commits anything. MaxLength (7/2/2/3, matching each field's
+                         own Maximum's digit count) is likewise set on each box's inner InputBox from
+                         code, in the same place, since NumberBox doesn't expose MaxLength itself.
+                         ColumnSpacing is tighter than BasicIntervalRow's (12) - 6 here - and FontSize is
+                         12 (down from the default ~14/15) on all four boxes, uniformly, so the header
+                         text stays legible and consistently sized across the row: without this,
+                         "Milliseconds" (by far the longest of the four headers) wrapped onto two lines
+                         at the default font size/spacing in this card's ~330px usable width, which grew
+                         the row's height unevenly against its neighbors and looked cramped - confirmed
+                         by screenshot before this fix, and reconfirmed one-line after it. NumberBox's
+                         own default ControlTemplate binds its Header's FontSize to the NumberBox's own
+                         FontSize (same as TextBox's did before this row's TextBox->NumberBox
+                         conversion - see generic.xaml), so this one property would shrink both the
+                         header and the input text together if left alone - the input text is restored
+                         to regular size separately, in code (see HookAdvancedIntervalBoxLiveSync's own
+                         comment on inputBox.FontSize), since only the Header caption needs to stay small.
+
+                         AdvancedIntervalRow renders about 3px shorter than BasicIntervalRow - root
+                         cause (confirmed by testing, not assumed): at FontSize=12 the Header text's own
+                         line-height shrinks, while the input area itself stays floored at the same
+                         TextControlThemeMinHeight (32px, see generic.xaml) both rows share, so the
+                         entire difference comes from the Header, not the input box. Rather than pad
+                         this row back out to match, the surrounding Grid's Row 1 (a "*"-height spacer
+                         between the header and both interval rows, MinHeight="12") absorbs whichever
+                         row is shorter, so BasicIntervalRow/AdvancedIntervalRow (both Grid.Row="2") stay
+                         pinned to the card's bottom edge regardless of which is visible - see the outer
+                         Border's MinHeight comment for how the card's overall height is kept stable
+                         across the toggle. -->
+                    <Grid x:Name="AdvancedIntervalRow" Grid.Row="2" ColumnSpacing="6" Visibility="Collapsed">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <NumberBox
+                            x:Name="HoursBox"
+                            Grid.Column="0"
+                            Header="Hours"
+                            FontSize="12"
+                            HorizontalAlignment="Stretch"
+                            Minimum="0"
+                            Maximum="1666665"
+                            SpinButtonPlacementMode="Hidden"
+                            ValueChanged="AdvancedIntervalBox_ValueChanged"
+                            AutomationProperties.AutomationId="HoursBox" />
+                        <NumberBox
+                            x:Name="AdvancedMinutesBox"
+                            Grid.Column="1"
+                            Header="Minutes"
+                            FontSize="12"
+                            HorizontalAlignment="Stretch"
+                            Minimum="0"
+                            Maximum="59"
+                            SpinButtonPlacementMode="Hidden"
+                            ValueChanged="AdvancedIntervalBox_ValueChanged"
+                            AutomationProperties.AutomationId="AdvancedMinutesBox" />
+                        <NumberBox
+                            x:Name="AdvancedSecondsBox"
+                            Grid.Column="2"
+                            Header="Seconds"
+                            FontSize="12"
+                            HorizontalAlignment="Stretch"
+                            Minimum="0"
+                            Maximum="59"
+                            SpinButtonPlacementMode="Hidden"
+                            ValueChanged="AdvancedIntervalBox_ValueChanged"
+                            AutomationProperties.AutomationId="AdvancedSecondsBox" />
+                        <NumberBox
+                            x:Name="MillisecondsBox"
+                            Grid.Column="3"
+                            Header="Milliseconds"
+                            FontSize="12"
+                            HorizontalAlignment="Stretch"
+                            Minimum="0"
+                            Maximum="999"
+                            SpinButtonPlacementMode="Hidden"
+                            ValueChanged="AdvancedIntervalBox_ValueChanged"
+                            AutomationProperties.AutomationId="MillisecondsBox" />
+                    </Grid>
+                </Grid>
             </Border>
 
             <!-- Scheduled stop card -->
@@ -315,6 +513,7 @@
                                 FontFamily="{ThemeResource SymbolThemeFontFamily}"
                                 Glyph="&#xE787;"
                                 VerticalAlignment="Center"
+                                Opacity="0.6"
                                 AutomationProperties.AccessibilityView="Raw" />
                         </Grid>
                     </Button>
@@ -348,17 +547,25 @@
                             AutomationProperties.AutomationId="AutoStopByCountRadioButton" />
                         <!-- Header ("clicks"/"spins") is set dynamically in code-behind
                              (UpdateAutoStopCountBoxHeader) to match whichever Auto Click/Spin Mode is
-                             currently selected on the main window. Minimum="1"/Maximum="999999999" plus a
-                             FractionDigits=0 NumberFormatter enforce whole numbers in [1, 999999999] -
-                             NumberBox clamps to Minimum/Maximum and rounds to the formatter's precision
-                             on commit, so neither decimals, negative values, nor out-of-range values can
-                             stick. -->
+                             currently selected on the main window. Minimum="1", Maximum=99999999 (set in
+                             the constructor, not as a XAML attribute here - see MainWindow()'s own
+                             comment on this, same XBF float32 precision issue MinutesBox.Maximum has),
+                             and a MaxLength of 8 (matching 99999999's own digit count) on this box's inner
+                             InputBox, set alongside its digits-only character filter in
+                             InitializeAdvancedIntervalLiveSync's own call to
+                             SetInputBoxMaxLength(AutoStopCountBox, ...) - see that method and
+                             HookIntervalCharacterFilter's doc comments. NumberBox does NOT actually
+                             auto-clamp typed/committed text to Minimum/Maximum on its own (confirmed
+                             empirically elsewhere in this file, e.g. IntervalBox_ValueChanged's own doc
+                             comment) - AutoStopCountBox_ValueChanged clamps explicitly instead. The
+                             FractionDigits=0 NumberFormatter only affects how a committed value is
+                             displayed, not what can be typed - decimals are unreachable anyway now that
+                             the character filter blocks '.'/',' outright. -->
                         <NumberBox
                             x:Name="AutoStopCountBox"
                             Margin="0,0,0,0"
                             HorizontalAlignment="Stretch"
                             Minimum="1"
-                            Maximum="100000000"
                             SmallChange="1"
                             LargeChange="10"
                             SpinButtonPlacementMode="Compact"
@@ -398,31 +605,28 @@
                 </StackPanel>
             </ContentDialog>
 
-            <!-- Confirmation shown from AppWindow_Closing (code-behind) when the user tries to close
-                 the window (X button, Alt+F4, taskbar close, etc.) while _engine.IsRunning is true -
-                 guards against an accidental close mid-automation. DefaultButton is Close (not Primary)
-                 so pressing Enter/Escape lands on the safe, non-destructive option rather than exiting. -->
-            <ContentDialog
-                x:Name="CloseConfirmationDialog"
-                Title="Automation is still running"
-                PrimaryButtonText="Close anyway"
-                CloseButtonText="Cancel"
-                DefaultButton="Close">
-                <ContentDialog.Content>
-                    <TextBlock TextWrapping="Wrap">
-                        MouseUtil is currently active. If you close now,<LineBreak/> it will stop immediately.
-                    </TextBlock>
-                </ContentDialog.Content>
-            </ContentDialog>
-
             <!-- Hidden elements that exist purely so code-behind can read a correctly theme-resolved
                  brush (respecting RootGrid's RequestedTheme override) without hard-coding colors. Only
-                 used by UpdateModeIndicators/ApplySelectedModeBoxStyle now - IntervalCaptionTextBlock/
-                 HotkeyCaptionTextBlock/StatusTextBlock get their theme-correct colors declaratively via
-                 DimmableLabel/StatusLabel's own VisualStates instead (see their Styles above). -->
+                 used by UpdateModeIndicators/ApplySelectedModeBoxStyle/UpdateRandomizeIntervalIndicator
+                 now - IntervalCaptionTextBlock/HotkeyCaptionTextBlock/StatusTextBlock get their
+                 theme-correct colors declaratively via DimmableLabel/StatusLabel's own VisualStates
+                 instead (see their Styles above). -->
             <TextBlock x:Name="MutedBrushSource" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Visibility="Collapsed" />
             <TextBlock x:Name="AccentBrushSource" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" Visibility="Collapsed" />
             <TextBlock x:Name="DisabledBrushSource" Foreground="{ThemeResource TextFillColorDisabledBrush}" Visibility="Collapsed" />
+            <!-- PrimaryBrushSource/OnAccentBrushSource: used by UpdateRandomizeIntervalIndicator to pick
+                 RandomizeIntervalIcon's Foreground - TextOnAccentFillColorPrimaryBrush (the same brush
+                 the ToggleButton's default ControlTemplate uses for ToggleButtonForegroundChecked -
+                 black on the accent pill in Dark theme, white on it in Light theme) only while Checked
+                 AND enabled, since the accent-filled pill it's tuned to sit on only exists in that exact
+                 state; TextFillColorPrimaryBrush (matching IntervalCaptionTextBlock's own undimmed base
+                 color) only while idle (Unchecked and enabled) - every other state (locked, regardless
+                 of Checked state) uses DisabledBrushSource just above instead, deliberately identical
+                 whether Checked or not (see UpdateRandomizeIntervalIndicator's doc comment for why). So
+                 the glyph is always readable against whatever's actually behind it, never a single
+                 hardcoded constant. -->
+            <TextBlock x:Name="PrimaryBrushSource" Foreground="{ThemeResource TextFillColorPrimaryBrush}" Visibility="Collapsed" />
+            <TextBlock x:Name="OnAccentBrushSource" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" Visibility="Collapsed" />
 
             <!-- Status line: positioned directly above the ON/OFF pill (row 5), right below
                  ModeSwitchButton, rather than up near the cards separated from the pill by the "*"
@@ -450,8 +654,8 @@
 
                  Internally it renders as two 48x48 rounded boxes (ClickModeBox / SpinModeBox) placed
                  2px apart (Grid.ColumnSpacing), each wrapping its icon in a Viewbox pinned to the same
-                 18x18 square so the custom arrow PathIcon (sized from its Data's natural geometry) and
-                 the Sync SymbolIcon (sized from FontSize) rasterize at the same pixel size. The boxes
+                 18x18 square so the ClickModeIcon FontIcon and the Sync SymbolIcon (both sized from
+                 FontSize) rasterize at the same pixel size. The boxes
                  have no Background fill at all and no BorderThickness/BorderBrush set here in XAML -
                  both are driven entirely from code (UpdateModeIndicators): the unselected box gets
                  BorderThickness=0 (fully invisible, no border, no fill), while the selected box gets
@@ -481,7 +685,7 @@
                 Click="ModeSwitchButton_Click"
                 AutomationProperties.AutomationId="ModeSwitchButton"
                 AutomationProperties.Name="Mode switch"
-                ToolTipService.ToolTip="Switch between Click mode and Spin mode">
+                ToolTipService.ToolTip="Switch between Auto click and Spin mode">
                 <!-- ModeSwitchButton is disabled (IsEnabled=false) while the utility is running - see
                      SetInputsEnabled() in code-behind - so the mode can't be changed mid-run. The
                      default Button ControlTemplate's "Disabled" VisualState animates Background/
@@ -578,18 +782,27 @@
                         <Border.RenderTransform>
                             <ScaleTransform x:Name="ClickModeScaleTransform" />
                         </Border.RenderTransform>
-                        <Viewbox Width="18" Height="18">
-                            <!-- Plain mouse-pointer arrow (no hand/click decoration). Segoe Fluent Icons has
-                                 no dedicated "plain arrow cursor" glyph (TouchPointer renders a hand+pointer),
-                                 so this is a hand-drawn classic pointer-arrow silhouette instead. -->
-                            <PathIcon
+                        <!-- 19x19, 1px bigger than SpinModeBox's Sync icon's 18x18 Viewbox below - the
+                             "\uE8B0" glyph reads visibly smaller than the Sync symbol at matching sizes,
+                             so this deliberately breaks the two icons' pixel-for-pixel size parity to
+                             compensate. Margin="1,0,-1,0" nudges this Viewbox 1px right within
+                             ClickModeBox's 48x48 box, without changing its own 19x19 size: an
+                             equal-and-opposite left/right margin shifts the centered position by
+                             (left-right)/2 while leaving the space available for centering unchanged
+                             (avoids also touching FontIcon's own RenderTransform, which already carries
+                             ClickModeIconRotateTransform). The "\uE8B0" glyph is mathematically centered
+                             in its own character cell, but its ink/silhouette reads as visually
+                             off-center to the eye - this corrects for that optical illusion, not an
+                             actual layout bug. -->
+                        <Viewbox Width="19" Height="19" Margin="1,0,-1,0">
+                            <FontIcon
                                 x:Name="ClickModeIcon"
-                                Data="M2,1 L2,13 L5,10.2 L7.2,15 L9.3,14.1 L7.1,9.3 L11,9.3 Z"
+                                Glyph="&#xE8B0;"
                                 RenderTransformOrigin="0.5,0.5">
-                                <PathIcon.RenderTransform>
+                                <FontIcon.RenderTransform>
                                     <RotateTransform x:Name="ClickModeIconRotateTransform" />
-                                </PathIcon.RenderTransform>
-                            </PathIcon>
+                                </FontIcon.RenderTransform>
+                            </FontIcon>
                         </Viewbox>
                     </Border>
                     <Border
@@ -649,7 +862,10 @@
                 </ToggleButton>
             </Grid>
 
-            <!-- Settings gear: anchored to the bottom-right corner of the whole content area. -->
+            <!-- Settings gear: anchored to the bottom-right corner of the whole content area.
+                 Collapsed while the Settings overlay is open (no replacement button occupies this
+                 slot any more - the overlay's own Back button lives at its top instead) - see
+                 MainWindow.ShowSettingsOverlay/SettingsBackButton_Click. -->
             <Button
                 x:Name="SettingsButton"
                 Grid.Row="0"
@@ -662,249 +878,195 @@
                 CornerRadius="16"
                 AutomationProperties.AutomationId="SettingsButton"
                 AutomationProperties.Name="Settings"
-                ToolTipService.ToolTip="Settings">
+                ToolTipService.ToolTip="Settings"
+                Click="SettingsButton_Click">
                 <FontIcon Glyph="&#xE713;" FontSize="15" />
+            </Button>
+
+            <!-- Update-available indicator: mirrors SettingsButton's exact size/position/chrome above,
+                 just anchored to the bottom-LEFT corner instead, and accent-colored rather than
+                 default-colored so it reads as a notification rather than a peer nav affordance.
+                 Collapsed by default/otherwise - only shown by InitializeAutoUpdateCheck's launch-time
+                 silent check (gated on Settings' "Check for updates on launch" toggle, default off)
+                 finding a newer version. Settings' own "Check for updates" button (UpdateButton in
+                 Controls/SettingsPanel.xaml) deliberately never reflects this result and always starts
+                 idle regardless - the two share the same underlying UpdateService/HttpClient instance
+                 (see _updateService/InitializeSettingsPanel's UpdateChecker wiring) but not UI state, so
+                 this is the only place this particular check's result is ever shown.
+
+                 Clicking opens a Flyout with a single button already in the "Update to vX.Y.Z" state
+                 (see UpdateAvailableFlyoutButton/InitializeAutoUpdateCheck) - there's no separate
+                 "Check for updates" idle state to show here, since by the time this button is even
+                 visible, an update is already known to exist. Dismissing that Flyout without clicking
+                 through (light-dismiss, Escape) hides this button again for the rest of the session -
+                 see UpdateAvailableFlyout_Closed - so afterward, checking again requires manually
+                 clicking Settings' own button, which runs its own fresh, independent check. -->
+            <Button
+                x:Name="UpdateAvailableButton"
+                Grid.Row="0"
+                Grid.RowSpan="6"
+                Width="32"
+                Height="32"
+                Padding="0"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Bottom"
+                CornerRadius="16"
+                Visibility="Collapsed"
+                AutomationProperties.AutomationId="UpdateAvailableButton"
+                AutomationProperties.Name="Update available"
+                ToolTipService.ToolTip="Update available">
+                <FontIcon Glyph="&#xE896;" FontSize="15" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
                 <Button.Flyout>
-                    <Flyout x:Name="SettingsFlyout" Placement="TopEdgeAlignedRight" Closed="SettingsFlyout_Closed">
-                        <StackPanel Spacing="16" Width="246">
-                            <!-- Version caption (e.g. "v1.2.0") mirrors MouseUtil.csproj's <Version>,
-                                 read at startup via SettingsVersionText's x:Name in code-behind since
-                                 this app is unpackaged and has no Package.Current to query. Fixed to
-                                 the header row's right edge, deliberately understated (Light weight,
-                                 50% opacity) so it doesn't compete with the "Settings" heading. -->
-                            <Grid>
+                    <Flyout Closed="UpdateAvailableFlyout_Closed">
+                        <Button
+                            x:Name="UpdateAvailableFlyoutButton"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Stretch"
+                            Style="{StaticResource AccentButtonStyle}"
+                            Click="UpdateAvailableFlyoutButton_Click"
+                            AutomationProperties.AutomationId="UpdateAvailableFlyoutButton">
+                            <Grid ColumnSpacing="8">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="Settings" Style="{ThemeResource BodyStrongTextBlockStyle}" />
                                 <TextBlock
-                                    x:Name="SettingsVersionText"
-                                    Grid.Column="1"
-                                    VerticalAlignment="Center"
-                                    HorizontalAlignment="Right"
-                                    FontWeight="Light"
-                                    Opacity="0.5" />
-                            </Grid>
-
-                            <!-- General UI/display setting (not mode-specific), grouped with Theme
-                                 rather than inside the Spin mode section below. Controls whether
-                                 PowerToggleButton shows a running click/spin count while automation is
-                                 active and a "Stopped after N clicks/spins" summary once it stops - see
-                                 UpdatePowerButtonRunningDisplay in code-behind. Nested in its own
-                                 tighter-spaced StackPanel so these three related toggles sit closer
-                                 together than the outer flyout's 16px rhythm. Each row is a Grid
-                                 (label column "*", switch column Auto) so the label sits left and the
-                                 switch is pinned to the flyout's right edge, matching the Windows
-                                 Settings-app row layout - the ToggleSwitch's OnContent/OffContent are
-                                 cleared and its Width trimmed since the control otherwise reserves
-                                 label space even when that content is empty. ShowActionCounterToggle's
-                                 and PauseOnMovementToggle's row labels are DimmableLabel (not plain
-                                 TextBlock) because SetInputsEnabled disables those two switches while
-                                 automation is running, and a plain sibling TextBlock won't dim itself -
-                                 see DimmableLabel and ShowActionCounterCaptionLabelStyle/
-                                 PauseOnMovementCaptionLabelStyle above. CloseToTrayToggle is never
-                                 disabled, so its row label stays a plain TextBlock. -->
-                            <StackPanel Spacing="6">
-                                <Grid ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <controls:DimmableLabel
-                                        x:Name="ShowActionCounterCaption"
-                                        Grid.Column="0"
-                                        VerticalAlignment="Center"
-                                        Style="{StaticResource ShowActionCounterCaptionLabelStyle}" />
-                                    <ToggleSwitch
-                                        x:Name="ShowActionCounterToggle"
-                                        Grid.Column="1"
-                                        OnContent=""
-                                        OffContent=""
-                                        MinWidth="0"
-                                        Width="44"
-                                        Padding="0"
-                                        HorizontalAlignment="Right"
-                                        VerticalAlignment="Center"
-                                        Toggled="ShowActionCounterToggle_Toggled"
-                                        AutomationProperties.AutomationId="ShowActionCounterToggle"
-                                        AutomationProperties.Name="Show click/spin counter" />
-                                </Grid>
-
-                                <Grid ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <controls:DimmableLabel
-                                        x:Name="PauseOnMovementCaption"
-                                        Grid.Column="0"
-                                        VerticalAlignment="Center"
-                                        Style="{StaticResource PauseOnMovementCaptionLabelStyle}" />
-                                    <ToggleSwitch
-                                        x:Name="PauseOnMovementToggle"
-                                        Grid.Column="1"
-                                        OnContent=""
-                                        OffContent=""
-                                        MinWidth="0"
-                                        Width="44"
-                                        Padding="0"
-                                        HorizontalAlignment="Right"
-                                        VerticalAlignment="Center"
-                                        Toggled="PauseOnMovementToggle_Toggled"
-                                        AutomationProperties.AutomationId="PauseOnMovementToggle"
-                                        AutomationProperties.Name="Pause spinning on movement" />
-                                </Grid>
-
-                                <!-- Mirrors the running interval countdown as a progress bar on the app's
-                                     taskbar icon (ITaskbarList3 - see Services/TaskbarProgressService),
-                                     turning amber/yellow automatically while paused. Never disabled while
-                                     running (purely cosmetic, like CloseToTrayToggle below), so its label
-                                     stays a plain TextBlock. -->
-                                <Grid ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock
-                                        Grid.Column="0"
-                                        Text="Show countdown progress on taskbar icon"
-                                        VerticalAlignment="Center"
-                                        TextWrapping="Wrap" />
-                                    <ToggleSwitch
-                                        x:Name="ShowTaskbarProgressToggle"
-                                        Grid.Column="1"
-                                        OnContent=""
-                                        OffContent=""
-                                        MinWidth="0"
-                                        Width="44"
-                                        Padding="0"
-                                        HorizontalAlignment="Right"
-                                        VerticalAlignment="Center"
-                                        Toggled="ShowTaskbarProgressToggle_Toggled"
-                                        AutomationProperties.AutomationId="ShowTaskbarProgressToggle"
-                                        AutomationProperties.Name="Show countdown progress on taskbar icon" />
-                                </Grid>
-
-                                <!-- Closing behavior: when on, closing the main window (X button, Alt+F4,
-                                     taskbar close) hides it to the system tray instead of exiting - the app
-                                     keeps running, reachable via the tray icon's left-click or "Show
-                                     MouseUtil"/"Exit" context menu (see TrayIconService and
-                                     MainWindow.AppWindow_Closing). -->
-                                <Grid ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock
-                                        Grid.Column="0"
-                                        Text="Keep running in system tray"
-                                        VerticalAlignment="Center"
-                                        TextWrapping="Wrap" />
-                                    <ToggleSwitch
-                                        x:Name="CloseToTrayToggle"
-                                        Grid.Column="1"
-                                        OnContent=""
-                                        OffContent=""
-                                        MinWidth="0"
-                                        Width="44"
-                                        Padding="0"
-                                        HorizontalAlignment="Right"
-                                        VerticalAlignment="Center"
-                                        Toggled="CloseToTrayToggle_Toggled"
-                                        AutomationProperties.AutomationId="CloseToTrayToggle"
-                                        AutomationProperties.Name="Keep running in system tray" />
-                                </Grid>
-                            </StackPanel>
-
-                            <!-- Start/Stop global hotkey (F6 by default) - recorded via
-                                 HotkeyButton_Click (enters recording mode) / HotkeyButton_KeyDown
-                                 (captures the next key + currently-held modifiers, or Escape to
-                                 cancel) in code-behind. Registration/persistence/rollback-on-conflict
-                                 all happen there and in GlobalHotkeyService; this is purely the
-                                 display + input surface. Label + trailing icon inside a field-styled
-                                 Button mirrors AutoStopButton's pattern above (caption embedded in
-                                 the field, icon docked right) for visual consistency. Header
-                                 TextBlock above it mimics the Header property other controls in this
-                                 flyout get natively, since a plain Button has none. -->
-                            <StackPanel Spacing="8">
-                                <controls:DimmableLabel x:Name="HotkeyCaptionTextBlock" Style="{StaticResource HotkeyCaptionLabelStyle}" />
-                                <Button
-                                    x:Name="HotkeyButton"
-                                    HorizontalAlignment="Stretch"
-                                    HorizontalContentAlignment="Stretch"
-                                    Click="HotkeyButton_Click"
-                                    KeyDown="HotkeyButton_KeyDown"
-                                    AutomationProperties.AutomationId="HotkeyButton"
-                                    AutomationProperties.Name="Start/Stop hotkey">
-                                    <Grid ColumnSpacing="8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock
-                                            x:Name="HotkeyButtonLabel"
-                                            Grid.Column="0"
-                                            HorizontalAlignment="Left"
-                                            VerticalAlignment="Center" />
-                                        <SymbolIcon
-                                            Grid.Column="1"
-                                            Symbol="Keyboard"
-                                            VerticalAlignment="Center"
-                                            AutomationProperties.AccessibilityView="Raw" />
-                                    </Grid>
-                                </Button>
-                                <TextBlock
-                                    x:Name="HotkeyErrorTextBlock"
-                                    Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                    x:Name="UpdateAvailableFlyoutButtonLabel"
+                                    Grid.Column="0"
                                     TextWrapping="Wrap"
-                                    Visibility="Collapsed"
-                                    AutomationProperties.AutomationId="HotkeyErrorTextBlock" />
-                            </StackPanel>
-
-                            <!-- Each item's Content is a StackPanel (icon + label) instead of a plain
-                                 string. ComboBox uses the same Content for both the closed/collapsed
-                                 selection box and the dropdown list items, so this renders correctly in
-                                 both places with no extra template work. Tag stays a plain "Light"/"Dark"/
-                                 "System" string on every item (untouched by this change), which is all
-                                 ThemeComboBox_SelectionChanged and LoadConfigIntoUi() actually read. -->
-                            <ComboBox
-                                x:Name="ThemeComboBox"
-                                Header="Theme"
-                                HorizontalAlignment="Stretch"
-                                SelectionChanged="ThemeComboBox_SelectionChanged">
-                                <ComboBoxItem
-                                    x:Name="ThemeLightItem"
-                                    Tag="Light"
-                                    AutomationProperties.AutomationId="ThemeLightItem">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <FontIcon Glyph="&#xE706;" FontSize="16" />
-                                        <TextBlock Text="Light" />
-                                    </StackPanel>
-                                </ComboBoxItem>
-                                <ComboBoxItem
-                                    x:Name="ThemeDarkItem"
-                                    Tag="Dark"
-                                    AutomationProperties.AutomationId="ThemeDarkItem">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <FontIcon Glyph="&#xE708;" FontSize="16" />
-                                        <TextBlock Text="Dark" />
-                                    </StackPanel>
-                                </ComboBoxItem>
-                                <ComboBoxItem
-                                    x:Name="ThemeSystemItem"
-                                    Tag="System"
-                                    AutomationProperties.AutomationId="ThemeSystemItem">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <FontIcon Glyph="&#xE7F4;" FontSize="16" />
-                                        <TextBlock Text="System" />
-                                    </StackPanel>
-                                </ComboBoxItem>
-                            </ComboBox>
-                        </StackPanel>
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Center" />
+                                <FontIcon
+                                    Grid.Column="1"
+                                    FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                                    Glyph="&#xE896;"
+                                    VerticalAlignment="Center"
+                                    AutomationProperties.AccessibilityView="Raw" />
+                            </Grid>
+                        </Button>
                     </Flyout>
                 </Button.Flyout>
             </Button>
+        </Grid>
+
+        <!-- Confirmation shown from AppWindow_Closing (code-behind) when the user tries to close the
+             window (X button, Alt+F4, taskbar close, etc.) while _engine.IsRunning is true - guards
+             against an accidental close mid-automation. DefaultButton is Close (not Primary) so
+             pressing Enter/Escape lands on the safe, non-destructive option rather than exiting.
+             Deliberately a sibling of MainContentGrid/SettingsOverlay (not nested inside either) -
+             it used to live inside MainContentGrid, but a Collapsed ancestor is excluded from layout
+             entirely, so ContentDialog's own content subtree never got measured/arranged whenever this
+             was triggered while Settings was open (MainContentGrid collapsed) - only its window-level
+             dimming overlay showed, with no visible dialog and no way back in. AppWindow_Closing can
+             fire at any time regardless of what's currently visible, so this can never be nested inside
+             something that might be collapsed. -->
+        <ContentDialog
+            x:Name="CloseConfirmationDialog"
+            Title="Automation is still running"
+            PrimaryButtonText="Close anyway"
+            CloseButtonText="Cancel"
+            DefaultButton="Close">
+            <ContentDialog.Content>
+                <TextBlock TextWrapping="Wrap">
+                    MouseUtil is currently active. If you close now,<LineBreak/> it will stop immediately.
+                </TextBlock>
+            </ContentDialog.Content>
+        </ContentDialog>
+
+        <!-- Settings overlay: covers only the content area below AppTitleBarGrid - it's a sibling
+             of the Grid above sharing the same RootGrid row, declared after it so it paints on top.
+             AppTitleBarGrid itself is untouched/still visible, which is what keeps "MOUSEUTIL"
+             showing and Mica/theme working automatically with no extra plumbing. Hosts the single
+             SettingsPanel instance (see Controls/SettingsPanel.xaml), permanently parented into
+             SettingsHost below.
+
+             Padding deliberately omits the right/bottom inset (left/top only): the ScrollViewer
+             below needs its own bounds to reach the window's true right edge so its scrollbar hugs
+             that edge instead of floating ~24px inboard of it on top of the content - the visual
+             inset that used to live here moves onto SettingsHost's own Margin instead.
+
+             No Background set at all (same as AppTitleBarGrid above) so the window's MicaBackdrop
+             shows through identically in both - a tinted "elevated surface" brush (e.g.
+             LayerOnMicaBaseAltFillColorDefaultBrush) was tried here and reverted: it's meant for a
+             panel that reads as visually distinct from the Mica around it, but this overlay covers
+             nearly the entire window, so that contrast just showed up as a hard seam against
+             AppTitleBarGrid's untinted Mica instead of one continuous surface. MainContentGrid is
+             collapsed (see ShowSettingsOverlay) to hide the controls that would otherwise still
+             show through a transparent background - that's a separate concern from the backdrop
+             itself. -->
+        <Grid
+            x:Name="SettingsOverlay"
+            Grid.Row="1"
+            Padding="24,16,0,0"
+            Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- Top-left Back affordance (standard back-button convention) - a compact icon+text
+                 Button styled to look like a lightweight nav link. Click reverses
+                 ShowSettingsOverlay (see SettingsBackButton_Click below); it also receives
+                 programmatic focus right after the overlay opens (see ShowSettingsOverlay) so
+                 MinutesBox/SecondsBox can't be left holding keyboard focus underneath this opaque
+                 overlay - see the fix's comment there for why that matters (NumberBox's Compact
+                 spin-button popup renders above everything otherwise).
+
+                 A plain Button rather than a HyperlinkButton: HyperlinkButton's default template
+                 forces the hand/link pointer cursor on hover, which read as misleading here (this
+                 isn't a hyperlink navigating anywhere external, just an in-app Back action) - Button
+                 keeps the regular arrow cursor. Foreground uses the same accent-colored brush
+                 HyperlinkButton renders its content in at rest, so it still reads as a link visually;
+                 Background/BorderBrush stay Transparent with a non-zero BorderThickness so the
+                 default ControlTemplate's PointerOver/Pressed states still have something to render
+                 into for hover feedback (see ModeSwitchButton's own comment elsewhere in this file
+                 for the same BorderThickness="1"/BorderBrush="Transparent" pattern). -->
+            <!-- Two-column header Grid: Back button on the left ("*" column), version text pinned
+                 to the right edge ("Auto" column) - see SettingsVersionText, set from
+                 UpdateService.GetCurrentVersionString() in the constructor. Right margin matches SettingsHost's own
+                 right Margin below (24) - SettingsOverlay's own Padding omits the right inset (see
+                 its comment above), so without this the version text would sit flush against the
+                 window's true right edge instead of aligning with the cards' right edge underneath
+                 it. -->
+            <Grid Grid.Row="0" Margin="0,0,24,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button
+                    x:Name="SettingsBackButton"
+                    Grid.Column="0"
+                    Padding="4,4,8,4"
+                    HorizontalAlignment="Left"
+                    Background="Transparent"
+                    BorderThickness="1"
+                    BorderBrush="Transparent"
+                    Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                    Click="SettingsBackButton_Click"
+                    AutomationProperties.AutomationId="SettingsBackButton"
+                    AutomationProperties.Name="Back">
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <FontIcon Glyph="&#xE72B;" FontSize="12" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                        <TextBlock Text="Back" />
+                    </StackPanel>
+                </Button>
+                <TextBlock
+                    x:Name="SettingsVersionText"
+                    Grid.Column="1"
+                    VerticalAlignment="Center"
+                    HorizontalAlignment="Right"
+                    FontWeight="Light"
+                    Opacity="0.5" />
+            </Grid>
+
+            <!-- SettingsHost's right/bottom Margin is where SettingsOverlay's own removed
+                 right/bottom Padding moved to (see that Grid's comment above): the settings rows
+                 stay visually inset from the window's true edges, while the ScrollViewer wrapping
+                 this Grid extends all the way to them, so its scrollbar renders flush against the
+                 true right edge instead of floating over the content. -->
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                <Grid x:Name="SettingsHost" Margin="0,0,24,24" />
+            </ScrollViewer>
         </Grid>
     </Grid>
 </Window>

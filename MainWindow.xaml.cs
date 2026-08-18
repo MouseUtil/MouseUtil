@@ -1,20 +1,20 @@
 using Microsoft.UI;
-using Microsoft.UI.Input;
+using Microsoft.UI.Composition;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using MouseUtil.Controls;
 using MouseUtil.Interop;
 using MouseUtil.Services;
 using System.Globalization;
+using System.Numerics;
 using Windows.Graphics;
-using Windows.System;
 using Windows.UI;
-using Windows.UI.Core;
 using Windows.UI.ViewManagement;
 
 namespace MouseUtil;
@@ -48,6 +48,14 @@ public sealed partial class MainWindow : Window
     private bool _isInitializing;
     private string _themePreference = "System";
     private DateTime? _stopDateTime;
+
+    // Fires once at the next local midnight to refresh AutoStopButtonLabel's Yesterday/Today/Tomorrow
+    // relative-day wording (see UpdateAutoStopButtonLabel/ScheduleNextMidnightRefresh) - nothing else
+    // naturally re-renders that label if the app just sits idle across a day boundary with a DateTime
+    // auto-stop already configured, e.g. "Tomorrow 14:00" needs to become "Today 14:00" the instant the
+    // day actually changes, not just the next time some unrelated UI interaction happens to touch it.
+    private readonly DispatcherTimer _autoStopLabelMidnightTimer = new();
+
     // _autoStopMode drives both AutoStopButtonLabel's text and the actual stop condition
     // PowerToggleButton_Checked passes to the engine - it always starts at None on launch, regardless
     // of what was persisted last session, and only becomes Count/DateTime once the user explicitly
@@ -65,6 +73,37 @@ public sealed partial class MainWindow : Window
     private int _autoStopCount = 100;
     private bool _isSpinModeSelected;
 
+    // Randomize-interval toggle (RandomizeIntervalButton, in the Interval card's header row) -
+    // deliberately never persisted to ConfigService, unlike most other toggles in this app: it
+    // always starts Off on launch, regardless of what it was set to last session. See
+    // RandomizeIntervalButton_Click/UpdateRandomizeIntervalIndicator and
+    // MouseAutomationEngine.Start's randomizeInterval parameter for where this actually takes effect.
+    private bool _isRandomizeIntervalEnabled;
+
+    // Advanced-interval-display mode (Hours/Minutes/Seconds/Milliseconds fields, in place of the plain
+    // Minutes/Seconds ones) - unlike _isRandomizeIntervalEnabled above, this one mirrors a genuinely
+    // persisted setting (config.ShowAdvancedIntervalDisplay, owned by SettingsPanel's "Display
+    // advanced interval" toggle - see UpdateAdvancedIntervalDisplayMode) rather than always starting
+    // Off. Purely a UI display-mode switch either way - MinutesBox.Value/SecondsBox.Value stay the
+    // actual source of truth (see AdvancedIntervalInputBox_TextChanged), so this field never feeds into
+    // MouseAutomationEngine.
+    private bool _isAdvancedIntervalDisplayEnabled;
+
+    // Guards AdvancedIntervalBox_ValueChanged/AdvancedIntervalInputBox_TextChanged/
+    // PopulateAdvancedIntervalFieldsFromBasic against reentrancy while one side of the Basic<->Advanced
+    // conversion is programmatically writing into the other side's controls (e.g.
+    // HoursBox.Value/AdvancedMinutesBox.Value etc. being populated from MinutesBox.Value/
+    // SecondsBox.Value right after the toggle is checked) - without this, each ValueChanged/
+    // TextChanged fired by that population would immediately try to convert back and overwrite
+    // MinutesBox/SecondsBox mid-population with a transient, incomplete total.
+    private bool _isSyncingAdvancedIntervalFields;
+
+    // The mode currently selected in the UI (regardless of whether automation is running) - used
+    // wherever a caller needs "whatever mode the mode switch is currently showing" as an AutomationMode
+    // rather than the raw _isSpinModeSelected bool, e.g. seeding TrayIconService's tooltip while
+    // inactive (see UpdateState's mode parameter).
+    private AutomationMode CurrentSelectedMode => _isSpinModeSelected ? AutomationMode.Spin : AutomationMode.Click;
+
     // Click/spin action counter (see UpdatePowerButtonRunningDisplay). _completedActionCount counts
     // every action Engine_ActionPerformed reports, with no exclusion for the first one - the first
     // action after the startup countdown (or the first action fired immediately via the hotkey, see
@@ -78,20 +117,31 @@ public sealed partial class MainWindow : Window
     private AutomationMode _runningMode;
     private bool _isPointerOverPowerButton;
 
-    // Global Start/Stop hotkey (F6 by default, user-configurable in Settings) - see
-    // GlobalHotkeyService, HotkeyService_HotkeyPressed, and the HotkeyButton_Click/_KeyDown
-    // recording flow. _hotkeyModifiers/_hotkeyKey mirror the currently-registered combination
-    // (loaded from AppConfig at startup, updated whenever recording a new one succeeds) so a failed
-    // re-registration attempt can roll back to them. _startTriggeredByHotkey is set just before
-    // HotkeyService_HotkeyPressed programmatically checks PowerToggleButton, and consumed (read then
-    // cleared) at the top of PowerToggleButton_Checked - this is what tells that handler to skip the
-    // normal startup countdown and fire the first action immediately, since a real user click on the
-    // button itself should still use the countdown as before.
+    // Global Start/Stop hotkey (F6 by default, user-configurable in Settings) - the actual
+    // RegisterHotKey calls live here (see GlobalHotkeyService, InitializeGlobalHotkey,
+    // HotkeyService_HotkeyPressed) since they require the WndProc subclass installed on this window;
+    // recording a new combination/display/rollback-on-conflict is SettingsPanel's concern (wired via
+    // its TryRegisterHotkey delegate - see InitializeSettingsPanel). _startTriggeredByHotkey is set
+    // just before HotkeyService_HotkeyPressed programmatically checks PowerToggleButton, and consumed
+    // (read then cleared) at the top of PowerToggleButton_Checked - this is what tells that handler to
+    // skip the normal startup countdown and fire the first action immediately, since a real user
+    // click on the button itself should still use the countdown as before. _startTriggeredByTrayAutoClick
+    // is the same idea for the tray context menu's "Start Auto Click" item (see
+    // TrayIconService_StartRequested) - only ever set for Click mode, since Spin mode already skips
+    // the startup grace unconditionally regardless of this flag (see the needsStartupGrace check in
+    // MouseAutomationEngine.RunLoopAsync), so "Start Spin Mode" from the tray needs no equivalent.
     private readonly GlobalHotkeyService _hotkeyService = new();
-    private uint _hotkeyModifiers;
-    private uint _hotkeyKey;
     private bool _startTriggeredByHotkey;
-    private bool _isRecordingHotkey;
+    private bool _startTriggeredByTrayAutoClick;
+
+    // Settings rows (see Controls/SettingsPanel.xaml) hosted permanently inside SettingsHost, within
+    // SettingsOverlay. See InitializeSettingsPanel for the event/delegate contract wiring it back up
+    // to this window's own window/system-level state.
+    private readonly Controls.SettingsPanel _settingsPanel = new();
+
+    // Guards ShowSettingsOverlay/SettingsBackButton_Click against re-entry while the slide
+    // animation between them (see AnimatePanelTransition) is still running.
+    private bool _isSettingsTransitioning;
 
     // Working copies of the values being edited while AutoStopDialog is open. Populated fresh from
     // the currently committed _stopDateTime/_autoStopCount (or sensible defaults, e.g. "now" for the
@@ -125,18 +175,19 @@ public sealed partial class MainWindow : Window
     // / running normal stop side effects for a run that never actually started.
     private bool _isRejectingInvalidStart;
 
-    // "Close to system tray" setting (Settings flyout CloseToTrayToggle, persisted via
-    // AppConfig.CloseToTray) - mirrors the toggle's current IsOn state so AppWindow_Closing can read it
+    // "Close to system tray" setting (SettingsPanel's CloseToTrayToggle, persisted there via
+    // ConfigService) - mirrors the toggle's current IsOn state (kept in sync via
+    // SettingsPanel.CloseToTrayChanged - see InitializeSettingsPanel) so AppWindow_Closing can read it
     // synchronously without touching the UI thread's control tree from inside that handler. See
-    // TrayIconService for the actual Shell_NotifyIcon plumbing, and CloseToTrayToggle_Toggled /
-    // TrayIconService_ExitRequested below for how it's kept in sync and how "Exit" from the tray menu
-    // reuses CloseConfirmationDialog.
+    // TrayIconService for the actual Shell_NotifyIcon plumbing, and TrayIconService_ExitRequested
+    // below for how "Exit" from the tray menu reuses CloseConfirmationDialog.
     private readonly TrayIconService _trayIconService = new();
     private bool _closeToTray;
 
-    // "Show timer in taskbar" setting (Settings flyout ShowTaskbarProgressToggle, persisted via
-    // AppConfig.ShowTaskbarProgress) - mirrors the ITaskbarList3-driven progress bar overlaid on this
-    // app's taskbar icon while automation runs (see Services/TaskbarProgressService). _lastTaskbarProgress
+    // "Show timer in taskbar" setting (SettingsPanel's ShowTaskbarProgressToggle, persisted there via
+    // ConfigService) - mirrors the ITaskbarList3-driven progress bar overlaid on this app's taskbar
+    // icon while automation runs (see Services/TaskbarProgressService, kept in sync via
+    // SettingsPanel.ShowTaskbarProgressChanged - see InitializeSettingsPanel). _lastTaskbarProgress
     // holds the most recent numeric progress reported by the engine (see StatusChangedEventArgs.Progress)
     // so a "Paused" report with no countdown of its own (movement just detected) can still repaint the
     // bar amber/yellow at wherever it already was, instead of resetting it to 0.
@@ -144,9 +195,31 @@ public sealed partial class MainWindow : Window
     private bool _showTaskbarProgress;
     private double _lastTaskbarProgress;
 
+    // Shared with SettingsPanel (see InitializeSettingsPanel's UpdateChecker wiring) so both the
+    // launch-time auto-check below and Settings' own manual "Check for updates" button reuse the same
+    // HttpClient instead of each hitting GitHub Releases separately - even though the two deliberately
+    // don't share UI state (see UpdateAvailableButton's own comment in MainWindow.xaml).
+    // _autoDetectedUpdate holds InitializeAutoUpdateCheck's result for as long as UpdateAvailableButton
+    // stays visible - read by UpdateAvailableFlyoutButton_Click when the user actually clicks through.
+    private readonly UpdateService _updateService = new();
+    private UpdateCheckResult? _autoDetectedUpdate;
+
     public MainWindow()
     {
         InitializeComponent();
+
+        // Set here rather than as a XAML Maximum="99999959" attribute on MinutesBox - see that
+        // control's own XAML comment for why: WinUI's XAML compiler round-trips large double
+        // attribute values through a 32-bit float in its compiled binary (XBF) encoding, and 99999959
+        // (above float32's exact-integer range of 2^24) silently became 99999960 at runtime as a
+        // result. A plain C# double assignment has no such precision loss. Set before LoadConfigIntoUi
+        // so MinutesBox.Maximum is already correct by the time that method (or anything it triggers)
+        // could read it.
+        MinutesBox.Maximum = 99999959d;
+
+        // Same XBF float32 precision issue as MinutesBox.Maximum above - 99999999 is also well past
+        // 2^24, so this has to be a plain C# assignment too, not a XAML Maximum="99999999" attribute.
+        AutoStopCountBox.Maximum = 99999999d;
 
         Title = "MouseUtil";
         SystemBackdrop = new MicaBackdrop();
@@ -158,12 +231,32 @@ public sealed partial class MainWindow : Window
 
         SizeWindow();
         CenterOnScreen();
+        InitializeSettingsPanel();
+
         LoadConfigIntoUi();
-        SettingsVersionText.Text = $"v{GetAppVersionString()}";
+        InitializeAdvancedIntervalLiveSync();
+
+        // AutoStopCountBox (the "After a number of clicks/spins" field in AutoStopDialog) gets the
+        // same digits-only character filter and MaxLength cap as the interval fields above - reuses
+        // SetInputBoxMaxLength/HookIntervalCharacterFilter as-is, not interval-specific despite living
+        // alongside interval setup. No decimal point allowed here at all (this field is always a whole
+        // count), and 8 matches its own Maximum's digit count (99999999).
+        SetInputBoxMaxLength(AutoStopCountBox, maxLength: 8, allowDecimalPoint: false);
+        SettingsVersionText.Text = $"v{UpdateService.GetCurrentVersionString()}";
         UpdateTitleBarCaptionSpacer();
+
+        // MouseUtil.csproj's <ApplicationIcon> only embeds this icon into the compiled exe's PE
+        // resources - that's what File Explorer/shortcuts/the pinned-taskbar icon read, but WinUI 3's
+        // Window/AppWindow has no equivalent auto-binding for a *running* window's own icon, so
+        // without this call Alt-Tab, Task View, and taskbar hover-preview thumbnails all fall back to
+        // a generic default. Reuses the exact same Assets\app.ico already shipped for the tray icon
+        // (see Services/TrayIconService.cs's LoadIcon) - no separate/duplicate icon file needed.
+        AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico"));
+
         InitializeGlobalHotkey();
         InitializeTrayIcon();
         _taskbarProgressService.Initialize(Win32Interop.GetWindowFromWindowId(AppWindow.Id));
+        InitializeAutoUpdateCheck();
 
         _engine.StatusChanged += Engine_StatusChanged;
         _engine.AutoStopped += Engine_AutoStopped;
@@ -174,16 +267,14 @@ public sealed partial class MainWindow : Window
         Closed += (_, _) => _hotkeyService.Dispose();
         Closed += (_, _) => _trayIconService.Dispose();
         Closed += (_, _) => _taskbarProgressService.Dispose();
+        Closed += (_, _) => _autoStopLabelMidnightTimer.Stop();
 
-        // WinUI auto-focuses the first focusable control in tab order (MinutesBox, being first in
-        // the Interval card) once the window activates and its control template is ready - there's no
-        // dedicated "initial focus target" API to redirect that default assignment up front, and it
-        // fires later than Activated/Loaded (a direct Focus() call from either of those still loses
-        // the race), so the only deterministic hook is to react to the assignment itself landing on
-        // MinutesBox and redirect it. This only ever fires once (unsubscribes immediately), so it
-        // only intercepts that one startup assignment - clicking or Tabbing into MinutesBox normally
-        // afterward is completely unaffected, and Tab order itself is untouched.
-        MinutesBox.GotFocus += MinutesBox_GotFocus;
+        _autoStopLabelMidnightTimer.Tick += (_, _) =>
+        {
+            UpdateAutoStopButtonLabel();
+            ScheduleNextMidnightRefresh();
+        };
+        ScheduleNextMidnightRefresh();
 
         // AccentBrushSource/MutedBrushSource (hidden TextBlocks bound via {ThemeResource}) update
         // their own Foreground automatically when the theme changes, but UpdateModeIndicators()
@@ -193,31 +284,32 @@ public sealed partial class MainWindow : Window
         // until the user clicks it again. Re-running UpdateModeIndicators() on every actual theme
         // change (covers both explicit Theme dropdown selection and the OS theme changing while
         // "System" is selected) keeps them in sync immediately instead.
-        RootGrid.ActualThemeChanged += (_, _) => UpdateModeIndicators();
+        RootGrid.ActualThemeChanged += (_, _) =>
+        {
+            UpdateModeIndicators();
+            UpdateRandomizeIntervalIndicator();
+        };
+
+        // Sets RandomizeIntervalIcon's initial AutomationProperties.Name/Foreground declaratively
+        // from _isRandomizeIntervalEnabled's actual (always-false-on-launch) value, rather than
+        // relying on the XAML defaults happening to already match it.
+        UpdateRandomizeIntervalIndicator();
     }
 
     /// <summary>
-    /// Fires exactly once - see the comment on the GotFocus subscription above. Redirects that one
-    /// startup focus assignment to SecondsBox instead of leaving it on MinutesBox.
-    /// </summary>
-    private void MinutesBox_GotFocus(object sender, RoutedEventArgs e)
-    {
-        MinutesBox.GotFocus -= MinutesBox_GotFocus;
-        SecondsBox.Focus(FocusState.Programmatic);
-    }
-
-    /// <summary>
-    /// Subclasses this window's WndProc (see GlobalHotkeyService) and registers the hotkey loaded
-    /// from config (_hotkeyModifiers/_hotkeyKey, set by LoadConfigIntoUi). If registration fails -
-    /// e.g. another app already owns that exact combination - the hotkey simply doesn't fire until
-    /// the user picks a different one in Settings; there's no other app state to roll back to at
-    /// startup, unlike a failed re-registration during recording (see HotkeyButton_KeyDown).
+    /// Subclasses this window's WndProc (see GlobalHotkeyService) and registers the hotkey currently
+    /// persisted in config. If registration fails - e.g. another app already owns that exact
+    /// combination - the hotkey simply doesn't fire until the user picks a different one in Settings;
+    /// there's no other app state to roll back to at startup, unlike a failed re-registration during
+    /// recording (see SettingsPanel.HotkeyButton_KeyDown).
     /// </summary>
     private void InitializeGlobalHotkey()
     {
         var hwnd = Win32Interop.GetWindowFromWindowId(AppWindow.Id);
         _hotkeyService.AttachToWindow(hwnd);
-        _hotkeyService.TryRegister(_hotkeyModifiers, _hotkeyKey);
+
+        var config = ConfigService.Load();
+        _hotkeyService.TryRegister(config.HotkeyModifiers, config.HotkeyKey);
         _hotkeyService.HotkeyPressed += HotkeyService_HotkeyPressed;
 
         // Single-instance enforcement (see App.OnLaunched/Services/SingleInstanceService): a second
@@ -225,6 +317,274 @@ public sealed partial class MainWindow : Window
         // opening a duplicate. Reuses the WndProc subclass GlobalHotkeyService already installed for
         // WM_HOTKEY above, rather than adding a second one.
         _hotkeyService.RegisterMessageHandler(SingleInstanceService.ShowWindowMessageId, ActivateAndBringToForeground);
+    }
+
+    /// <summary>
+    /// Wires the settings panel into this window (see its own field doc comment) and installs it
+    /// into SettingsHost, inside SettingsOverlay, as its single, permanent home. Each subscription
+    /// below is the MainWindow-side half of a contract SettingsPanel exposes for the one thing it
+    /// can't do on its own - see each event's doc comment on SettingsPanel for why.
+    /// </summary>
+    private void InitializeSettingsPanel()
+    {
+        _settingsPanel.TryRegisterHotkey = (modifiers, key) => _hotkeyService.TryRegister(modifiers, key);
+        _settingsPanel.UnregisterHotkey = () => _hotkeyService.Unregister();
+        _settingsPanel.UpdateChecker = _updateService;
+
+        _settingsPanel.ThemeSelectionChanged += (_, theme) => ApplyTheme(theme);
+        _settingsPanel.CloseToTrayChanged += (_, _) =>
+        {
+            _closeToTray = _settingsPanel.CloseToTray;
+            UpdateTrayIconVisibility();
+        };
+        _settingsPanel.ShowTaskbarProgressChanged += (_, _) =>
+        {
+            _showTaskbarProgress = _settingsPanel.ShowTaskbarProgress;
+            if (!_showTaskbarProgress)
+            {
+                _taskbarProgressService.Clear();
+            }
+        };
+        _settingsPanel.PauseOnMovementChanged += (_, _) => ResetStatusToOffIfNotRunning();
+        _settingsPanel.ShowActionCounterChanged += (_, _) => UpdatePowerButtonRunningDisplay();
+        _settingsPanel.ShowAdvancedIntervalDisplayChanged += (_, _) => UpdateAdvancedIntervalDisplayMode();
+        _settingsPanel.CloseAppRequested += (_, _) =>
+        {
+            _isClosingConfirmed = true;
+            Close();
+        };
+
+        SettingsHost.Children.Add(_settingsPanel);
+    }
+
+    /// <summary>
+    /// Silently checks GitHub Releases once at startup, gated on Settings' "Automatically check for
+    /// updates" toggle (default off - see AppConfig.AutoCheckForUpdates) - unlike SettingsPanel's own
+    /// manual button, this never surfaces a "Checking..."/error state anywhere, since the user never
+    /// explicitly asked for it at this moment; a failure here just means UpdateAvailableButton stays
+    /// hidden, identical to "no update available" from the user's point of view. Deliberately does
+    /// NOT touch SettingsPanel.UpdateButton's own idle state - the two are independent (see
+    /// UpdateAvailableButton's comment in MainWindow.xaml for why).
+    /// </summary>
+    private async void InitializeAutoUpdateCheck()
+    {
+        if (!ConfigService.Load().AutoCheckForUpdates)
+        {
+            return;
+        }
+
+        try
+        {
+            var result = await _updateService.CheckForUpdateAsync(UpdateService.GetCurrentVersionString(), CancellationToken.None);
+            if (result.IsUpdateAvailable)
+            {
+                _autoDetectedUpdate = result;
+                UpdateAvailableFlyoutButtonLabel.Text = $"Update to v{result.LatestVersion}";
+                UpdateAvailableButton.Visibility = Visibility.Visible;
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException or FormatException)
+        {
+            // Silent by design - see this method's doc comment.
+        }
+    }
+
+    /// <summary>
+    /// Mirrors the download-then-close half of SettingsPanel.UpdateButton_Click, but standalone since
+    /// this button lives outside SettingsPanel - see UpdateAvailableButton's comment in
+    /// MainWindow.xaml. No "first click checks, second click downloads" distinction here: by the time
+    /// this button is visible at all, _autoDetectedUpdate is already populated, so every click goes
+    /// straight to downloading (or opening the release page, if the release has no .exe asset yet).
+    /// </summary>
+    private async void UpdateAvailableFlyoutButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_autoDetectedUpdate is not { } update)
+        {
+            return;
+        }
+
+        if (update.DownloadUrl is null)
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(update.ReleaseUrl) { UseShellExecute = true });
+            return;
+        }
+
+        UpdateAvailableFlyoutButton.IsEnabled = false;
+        UpdateAvailableFlyoutButtonLabel.Text = "Downloading...";
+        try
+        {
+            var installerPath = await _updateService.DownloadInstallerAsync(update.DownloadUrl, CancellationToken.None);
+            _updateService.LaunchInstaller(installerPath);
+            _isClosingConfirmed = true;
+            Close();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException)
+        {
+            UpdateAvailableFlyoutButtonLabel.Text = "Couldn't download the update. Try again later.";
+            UpdateAvailableFlyoutButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>
+    /// Fires whenever the Flyout closes for any reason (light-dismiss, Escape, or the successful
+    /// download/close path above) - hiding UpdateAvailableButton unconditionally is correct either
+    /// way: on a genuine dismiss-without-updating it's the intended one-shot-notification behavior
+    /// (see UpdateAvailableButton's comment in MainWindow.xaml), and on the successful path the app is
+    /// already closing anyway, so touching this button's visibility is moot.
+    /// </summary>
+    private void UpdateAvailableFlyout_Closed(object sender, object e)
+    {
+        UpdateAvailableButton.Visibility = Visibility.Collapsed;
+    }
+
+    private void SettingsButton_Click(object sender, RoutedEventArgs e) => ShowSettingsOverlay();
+
+    /// <summary>
+    /// Opens the Settings overlay: moves focus onto SettingsBackButton rather than leaving it
+    /// wherever it was in the main content underneath. SettingsButton itself is deliberately left
+    /// alone here - it's a child of MainContentGrid, which already goes fully Collapsed (and is
+    /// IsHitTestVisible=false for the whole transition, even before that) once Settings is showing,
+    /// so it's already excluded from hit-testing and the visual tree without needing its own separate
+    /// Visibility toggle. An explicit SettingsButton.Visibility = Collapsed/Visible pair used to exist
+    /// here and in SettingsBackButton_Click - removed because it caused SettingsButton to pop in
+    /// abruptly right at the end of the slide-back animation instead of sliding into place smoothly
+    /// with the rest of MainContentGrid's content like everything else in it.
+    /// </summary>
+    private void ShowSettingsOverlay()
+    {
+        if (_isSettingsTransitioning)
+        {
+            return;
+        }
+
+        ModeSubtitleTextBlock.Text = "Settings";
+
+        // MainContentGrid's Visibility.Collapsed no longer happens here directly - it's deferred to
+        // AnimatePanelTransition's completion, once it has actually slid off screen (see that
+        // method's own comment for why a Collapsed element can't be animated in the first place).
+        AnimatePanelTransition(outgoing: MainContentGrid, incoming: SettingsOverlay, reverse: false,
+            onCompleted: () => SettingsBackButton.Focus(FocusState.Programmatic));
+    }
+
+    /// <summary>
+    /// Reverses ShowSettingsOverlay: slides the overlay back out (see ShowSettingsOverlay's own
+    /// comment for why SettingsButton doesn't need any explicit handling here either).
+    /// ModeSubtitleTextBlock is set back to the mode name immediately/synchronously here, mirroring
+    /// what ShowSettingsOverlay already does for the opposite direction, so the subtitle updates
+    /// instantly rather than waiting on the 300ms slide-back animation. UpdateModeIndicators()'s call
+    /// in onCompleted below re-sets the exact same text once the animation finishes (harmless
+    /// redundancy - by then SettingsOverlay.Visibility is Collapsed so its own guard lets it through)
+    /// but is still needed there because it also drives icon colors and mode-box borders, which are
+    /// separate from this fix and should keep waiting for the transition to finish.
+    /// </summary>
+    private void SettingsBackButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isSettingsTransitioning)
+        {
+            return;
+        }
+
+        _settingsPanel.HandleHostClosing();
+        ModeSubtitleTextBlock.Text = _isSpinModeSelected ? "Spin mode" : "Auto click";
+
+        AnimatePanelTransition(outgoing: SettingsOverlay, incoming: MainContentGrid, reverse: true,
+            onCompleted: UpdateModeIndicators);
+    }
+
+    /// <summary>
+    /// Slides `outgoing` off screen while sliding `incoming` into place, via the Composition API
+    /// directly (Visual.Translation/Opacity), rather than a Storyboard - this is the same
+    /// DirectComposition-backed engine WinUI's own Frame navigation transitions render through, just
+    /// driven by hand since MainWindow has no Frame/Page to navigate. reverse=false is the "forward"
+    /// direction (Main -> Settings): incoming enters from the right, outgoing exits to the left.
+    /// reverse=true mirrors it (Settings -> Main): incoming enters from the left, outgoing exits right.
+    ///
+    /// Animates the Translation facade (enabled via SetIsTranslationEnabled), NOT Offset. Offset is
+    /// the same property XAML's own layout/Arrange writes to position a panel normally, so animating
+    /// it directly races Arrange - most visibly the very first time a panel is shown (it's been
+    /// Collapsed, excluded from layout entirely, since app launch): that first-ever Arrange can land a
+    /// frame after StartAnimation begins and silently overwrite Offset, killing the slide (only the
+    /// Opacity animation would survive, so the panel just faded in place instead of sliding).
+    /// Translation composes additively on top of whatever Offset Arrange assigns and Arrange never
+    /// touches it, so there's no race regardless of timing.
+    ///
+    /// Both elements are forced Visible for the animation's duration - a Collapsed element is excluded
+    /// from layout entirely (see CloseConfirmationDialog's own comment elsewhere in this file for the
+    /// app's prior run-in with exactly this), so `outgoing` only becomes Collapsed again once its exit
+    /// animation has actually finished, from the completion batch below. IsHitTestVisible is dropped to
+    /// false on both elements for the same window, so nothing mid-slide can be clicked or tabbed into.
+    /// </summary>
+    private void AnimatePanelTransition(FrameworkElement outgoing, FrameworkElement incoming, bool reverse, Action? onCompleted = null)
+    {
+        _isSettingsTransitioning = true;
+
+        var distance = (float)(RootGrid.ActualWidth > 0 ? RootGrid.ActualWidth : AppWindow.Size.Width);
+        var incomingFrom = new Vector3(reverse ? -distance : distance, 0, 0);
+        var outgoingTo = new Vector3(reverse ? distance : -distance, 0, 0);
+
+        incoming.Visibility = Visibility.Visible;
+        incoming.IsHitTestVisible = false;
+        outgoing.IsHitTestVisible = false;
+
+        ElementCompositionPreview.SetIsTranslationEnabled(outgoing, true);
+        ElementCompositionPreview.SetIsTranslationEnabled(incoming, true);
+
+        var compositor = ElementCompositionPreview.GetElementVisual(RootGrid).Compositor;
+        var easing = compositor.CreateCubicBezierEasingFunction(new Vector2(0.1f, 0.9f), new Vector2(0.2f, 1f));
+        var duration = TimeSpan.FromMilliseconds(300);
+
+        var outgoingVisual = ElementCompositionPreview.GetElementVisual(outgoing);
+        var incomingVisual = ElementCompositionPreview.GetElementVisual(incoming);
+
+        incomingVisual.Properties.InsertVector3("Translation", incomingFrom);
+        incomingVisual.Opacity = 0f;
+
+        var outgoingTranslation = compositor.CreateVector3KeyFrameAnimation();
+        outgoingTranslation.InsertKeyFrame(0f, Vector3.Zero);
+        outgoingTranslation.InsertKeyFrame(1f, outgoingTo, easing);
+        outgoingTranslation.Duration = duration;
+
+        var outgoingOpacity = compositor.CreateScalarKeyFrameAnimation();
+        outgoingOpacity.InsertKeyFrame(0f, 1f);
+        outgoingOpacity.InsertKeyFrame(1f, 0f, easing);
+        outgoingOpacity.Duration = duration;
+
+        var incomingTranslation = compositor.CreateVector3KeyFrameAnimation();
+        incomingTranslation.InsertKeyFrame(0f, incomingFrom);
+        incomingTranslation.InsertKeyFrame(1f, Vector3.Zero, easing);
+        incomingTranslation.Duration = duration;
+
+        var incomingOpacity = compositor.CreateScalarKeyFrameAnimation();
+        incomingOpacity.InsertKeyFrame(0f, 0f);
+        incomingOpacity.InsertKeyFrame(1f, 1f, easing);
+        incomingOpacity.Duration = duration;
+
+        // A single ScopedBatch spanning all four animations gives one Completed event for the whole
+        // transition, instead of racing four independent animations' own completion callbacks against
+        // each other.
+        var batch = compositor.CreateScopedBatch(CompositionBatchTypes.Animation);
+
+        outgoingVisual.StartAnimation("Translation", outgoingTranslation);
+        outgoingVisual.StartAnimation("Opacity", outgoingOpacity);
+        incomingVisual.StartAnimation("Translation", incomingTranslation);
+        incomingVisual.StartAnimation("Opacity", incomingOpacity);
+
+        batch.Completed += (_, _) =>
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                outgoing.Visibility = Visibility.Collapsed;
+                outgoingVisual.Properties.InsertVector3("Translation", Vector3.Zero);
+                outgoingVisual.Opacity = 1f;
+
+                outgoing.IsHitTestVisible = true;
+                incoming.IsHitTestVisible = true;
+
+                _isSettingsTransitioning = false;
+                onCompleted?.Invoke();
+            });
+        };
+        batch.End();
     }
 
     /// <summary>
@@ -259,10 +619,82 @@ public sealed partial class MainWindow : Window
     {
         var hwnd = Win32Interop.GetWindowFromWindowId(AppWindow.Id);
         _trayIconService.Initialize(hwnd, _hotkeyService);
+        _trayIconService.UpdateState(isRunning: _engine.IsRunning, isPaused: false, mode: CurrentSelectedMode);
         _trayIconService.ShowRequested += (_, _) => ActivateAndBringToForeground();
         _trayIconService.ExitRequested += TrayIconService_ExitRequested;
+        _trayIconService.StartRequested += TrayIconService_StartRequested;
+        _trayIconService.StopRequested += TrayIconService_StopRequested;
+        _trayIconService.TogglePauseOnMovementRequested += TrayIconService_TogglePauseOnMovementRequested;
 
         UpdateTrayIconVisibility();
+    }
+
+    /// <summary>
+    /// Handles "Start Auto Click"/"Start Spin Mode" from the tray context menu (only reachable while
+    /// inactive - see TrayIconService.ShowContextMenu). Forces the mode selector to the requested mode
+    /// (mirroring what ModeSwitchButton_Click does, via the shared SetSelectedMode) and then starts
+    /// automation by toggling PowerToggleButton exactly as a real click would - reusing 100% of
+    /// PowerToggleButton_Checked's existing start logic (interval/auto-stop/pause-on-movement read live
+    /// from the UI, engine start, input disabling, status text, tray icon update, etc.) rather than
+    /// duplicating any of it. Same pattern HotkeyService_HotkeyPressed already uses for the global
+    /// hotkey. The _engine.IsRunning guard is defensive - the menu item is disabled whenever running -
+    /// but avoids ever re-entering Checked's logic if this somehow fires anyway.
+    ///
+    /// For Click mode specifically, this also arms _startTriggeredByTrayAutoClick before checking the
+    /// button, so PowerToggleButton_Checked skips the startup countdown and fires the first click
+    /// immediately - matching the global hotkey's existing behavior, since "Start Auto Click" from the
+    /// tray implies the user isn't at the main window (possibly not even hovering it) any more than a
+    /// hotkey press does. Spin mode is deliberately left alone: MouseAutomationEngine.RunLoopAsync's
+    /// needsStartupGrace check already skips the startup grace for Spin unconditionally, so there's no
+    /// countdown to skip and no flag to set here.
+    /// </summary>
+    private void TrayIconService_StartRequested(object? sender, AutomationMode mode)
+    {
+        if (_engine.IsRunning)
+        {
+            return;
+        }
+
+        if (mode == AutomationMode.Click)
+        {
+            _startTriggeredByTrayAutoClick = true;
+        }
+
+        SetSelectedMode(mode);
+        PowerToggleButton.IsChecked = true;
+    }
+
+    /// <summary>
+    /// Handles "Stop" from the tray context menu (only reachable while running - see
+    /// TrayIconService.ShowContextMenu). Reuses PowerToggleButton_Unchecked's existing stop logic in
+    /// full by toggling PowerToggleButton off, same as TrayIconService_StartRequested does for starting.
+    /// </summary>
+    private void TrayIconService_StopRequested(object? sender, EventArgs e)
+    {
+        if (!_engine.IsRunning)
+        {
+            return;
+        }
+
+        PowerToggleButton.IsChecked = false;
+    }
+
+    /// <summary>
+    /// Handles "Pause spinning on movement" from the tray context menu (only reachable while inactive -
+    /// see TrayIconService.ShowContextMenu). Flips SettingsPanel's PauseOnMovementToggle itself
+    /// (via TogglePauseOnMovement) rather than writing to AppConfig directly, so SettingsPanel's own
+    /// Toggled handler stays the single place that persists the setting; this keeps the settings
+    /// panel's toggle and the tray-driven change in sync in both directions with no separate
+    /// bookkeeping.
+    /// </summary>
+    private void TrayIconService_TogglePauseOnMovementRequested(object? sender, EventArgs e)
+    {
+        if (_engine.IsRunning)
+        {
+            return;
+        }
+
+        _settingsPanel.TogglePauseOnMovement();
     }
 
     /// <summary>
@@ -457,18 +889,6 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    // Reads the running exe's file version (set via MouseUtil.csproj's <Version>, kept in sync with
-    // installer\MouseUtil.iss's MyAppVersion) for display in the Settings flyout header. This app is
-    // unpackaged (WindowsPackageType=None, no Package.appxmanifest), so there's no Package.Current to
-    // query - FileVersionInfo on the entry assembly's own path is the unpackaged equivalent. Falls back
-    // to AssemblyName's Version (always present) if the file version is ever unavailable.
-    private static string GetAppVersionString()
-    {
-        var assembly = System.Reflection.Assembly.GetExecutingAssembly();
-        var fileVersion = System.Diagnostics.FileVersionInfo.GetVersionInfo(assembly.Location).ProductVersion;
-        return !string.IsNullOrWhiteSpace(fileVersion) ? fileVersion : assembly.GetName().Version?.ToString() ?? "unknown";
-    }
-
     private void LoadConfigIntoUi()
     {
         _isInitializing = true;
@@ -477,25 +897,19 @@ public sealed partial class MainWindow : Window
 
         MinutesBox.Value = config.IntervalMinutes;
         SecondsBox.Value = config.IntervalSeconds;
-        PauseOnMovementToggle.IsOn = config.PauseOnMovement;
-        ShowActionCounterToggle.IsOn = config.ShowActionCounter;
 
-        _closeToTray = config.CloseToTray;
-        CloseToTrayToggle.IsOn = _closeToTray;
+        // SettingsPanel already loaded its own persisted state (including CloseToTray/
+        // ShowTaskbarProgress/ShowAdvancedIntervalDisplay) when it was constructed in
+        // InitializeSettingsPanel, called just before this method - read its mirrors here rather than
+        // re-parsing config a second time.
+        _closeToTray = _settingsPanel.CloseToTray;
+        _showTaskbarProgress = _settingsPanel.ShowTaskbarProgress;
 
-        _showTaskbarProgress = config.ShowTaskbarProgress;
-        ShowTaskbarProgressToggle.IsOn = _showTaskbarProgress;
+        // Applies the persisted Advanced-interval-display setting - called after MinutesBox/SecondsBox
+        // above so PopulateAdvancedIntervalFieldsFromBasic reads the just-loaded values if this
+        // restores into Advanced mode.
+        UpdateAdvancedIntervalDisplayMode();
 
-        _hotkeyModifiers = config.HotkeyModifiers;
-        _hotkeyKey = config.HotkeyKey;
-        HotkeyButtonLabel.Text = FormatHotkey(_hotkeyModifiers, _hotkeyKey);
-
-        ThemeComboBox.SelectedItem = config.Theme switch
-        {
-            "Light" => ThemeLightItem,
-            "Dark" => ThemeDarkItem,
-            _ => ThemeSystemItem
-        };
         ApplyTheme(config.Theme);
 
         _isSpinModeSelected = config.LastMode == "Spin";
@@ -568,29 +982,38 @@ public sealed partial class MainWindow : Window
         AutoStopCheckBox.IsEnabled = enabled;
         SetStopControlsEnabled(enabled && AutoStopCheckBox.IsChecked == true);
 
-        // Settings that would otherwise let the user change how the running automation behaves out
-        // from under it: the hotkey (recording a new one mid-run makes no sense - it's the same
-        // input that's currently controlling this very run), and two display/behavior toggles it
-        // wouldn't make sense to flip while running. Only IsEnabled changes here - IsOn/values are
-        // left completely untouched, so whatever was configured stays configured; this only blocks
-        // interaction, matching MinutesBox/SecondsBox/AutoStopCheckBox above. Theme is deliberately
-        // not included here - switching themes while automation runs is still allowed.
-        HotkeyButton.IsEnabled = enabled;
-        ShowActionCounterToggle.IsEnabled = enabled;
-        PauseOnMovementToggle.IsEnabled = enabled;
-
-        // IntervalCaptionTextBlock/HotkeyCaptionTextBlock/ShowActionCounterCaption/
-        // PauseOnMovementCaption are DimmableLabel controls (see Controls/DimmableLabel.cs) - setting
-        // IsEnabled here drives their Normal/Disabled VisualState transition declaratively, the same
-        // way MinutesBox/SecondsBox's own Header text dims when their IsEnabled flips false. No
-        // Foreground assignment needed on this side at all. ShowActionCounterCaption/
-        // PauseOnMovementCaption mirror the toggles they label immediately above - CloseToTrayToggle's
-        // row label is a plain TextBlock (not DimmableLabel) and intentionally isn't touched here,
-        // since that toggle is never disabled while running.
+        // IntervalCaptionTextBlock is a DimmableLabel control (see Controls/DimmableLabel.cs) -
+        // setting IsEnabled here drives its Normal/Disabled VisualState transition declaratively, the
+        // same way MinutesBox/SecondsBox's own Header text dims when their IsEnabled flips false.
         IntervalCaptionTextBlock.IsEnabled = enabled;
-        HotkeyCaptionTextBlock.IsEnabled = enabled;
-        ShowActionCounterCaption.IsEnabled = enabled;
-        PauseOnMovementCaption.IsEnabled = enabled;
+
+        // Locked while running so the randomize-interval behavior can't change out from under an
+        // in-progress run. The two disabled cases still look deliberately different for the button's
+        // own chrome (see RandomizeIntervalButton.Resources in MainWindow.xaml): Unchecked+Disabled
+        // stays fully invisible (ToggleButtonBackgroundDisabled/BorderBrushDisabled are overridden to
+        // Transparent - there's nothing to indicate when the setting is off), while Checked+Disabled
+        // draws an outline (ToggleButtonBackgroundCheckedDisabled is Transparent,
+        // ToggleButtonBorderBrushCheckedDisabled is a gray) so the user can still see at a glance that
+        // the setting is on even while it's locked. RandomizeIntervalIcon's own Foreground/Opacity
+        // aren't set here at all, though - they're set from within UpdateRandomizeIntervalIndicator
+        // instead (called below, after IsEnabled is updated so it can see the new locked state), which
+        // now gives the icon the exact same dimmed look while locked regardless of Checked state - see
+        // that method's doc comment for why.
+        RandomizeIntervalButton.IsEnabled = enabled;
+        UpdateRandomizeIntervalIndicator();
+
+        // The four Hours/Minutes/Seconds/Milliseconds fields get the same locked-while-running
+        // treatment as MinutesBox/SecondsBox above - the values within them can't change out from
+        // under an in-progress run. (SettingsPanel's own "Display advanced interval" toggle is
+        // locked the same way, independently, in SettingsPanel.SetInputsEnabled.)
+        HoursBox.IsEnabled = enabled;
+        AdvancedMinutesBox.IsEnabled = enabled;
+        AdvancedSecondsBox.IsEnabled = enabled;
+        MillisecondsBox.IsEnabled = enabled;
+
+        // Hotkey/ShowActionCounter/PauseOnMovement (and their DimmableLabel captions) live in
+        // SettingsPanel now.
+        _settingsPanel.SetInputsEnabled(enabled);
     }
 
     private void SetStopControlsEnabled(bool enabled)
@@ -615,9 +1038,11 @@ public sealed partial class MainWindow : Window
     private void PowerToggleButton_Checked(object sender, RoutedEventArgs e)
     {
         // Consumed unconditionally, before the early-return below, so a stale true from some earlier
-        // hotkey press can never leak into a later, genuinely button-click-triggered start.
-        var skipStartupCountdown = _startTriggeredByHotkey;
+        // hotkey press or tray "Start Auto Click" can never leak into a later, genuinely
+        // button-click-triggered start.
+        var skipStartupCountdown = _startTriggeredByHotkey || _startTriggeredByTrayAutoClick;
         _startTriggeredByHotkey = false;
+        _startTriggeredByTrayAutoClick = false;
 
         if (AutoStopCheckBox.IsChecked == true)
         {
@@ -643,10 +1068,10 @@ public sealed partial class MainWindow : Window
             }
         }
 
-        var mode = _isSpinModeSelected ? AutomationMode.Spin : AutomationMode.Click;
+        var mode = CurrentSelectedMode;
 
-        var minutes = ReadCommittedOrTypedValue(MinutesBox);
-        var seconds = ReadCommittedOrTypedValue(SecondsBox);
+        var minutes = ReadCommittedOrTypedValue(MinutesBox, fractionDigits: 0);
+        var seconds = ReadCommittedOrTypedValue(SecondsBox, fractionDigits: 3);
         var totalSeconds = Math.Max(0.05, minutes * 60 + seconds);
         var interval = TimeSpan.FromSeconds(totalSeconds);
 
@@ -687,7 +1112,8 @@ public sealed partial class MainWindow : Window
         PowerToggleLabel.Text = "Stop";
         AutomationProperties.SetName(PowerToggleButton, "Power, Stop");
 
-        _engine.Start(mode, interval, stopAt, stopAfterActionCount, PauseOnMovementToggle.IsOn, skipStartupCountdown);
+        _engine.Start(mode, interval, stopAt, stopAfterActionCount, _settingsPanel.PauseOnMovement, _isRandomizeIntervalEnabled, skipStartupCountdown);
+        _trayIconService.UpdateState(isRunning: true, isPaused: false, mode: mode);
         UpdateModeIndicators();
     }
 
@@ -698,20 +1124,63 @@ public sealed partial class MainWindow : Window
     // presumably from its own internal validation being debounced/async. Reading the template's actual
     // "InputBox" TextBox part directly is the one source with zero indirection - it's the literal
     // control the user is typing into.
-    private static double ReadCommittedOrTypedValue(NumberBox box)
+    //
+    // fractionDigits truncates (floors, never rounds) whatever was parsed to that many decimal places
+    // before clamping to box.Minimum/box.Maximum - this is what makes a hotkey-triggered start use
+    // e.g. 570 (not 570.002) for MinutesBox or 5.642 (not 5.6427) for SecondsBox, mirroring the
+    // truncation IntervalBox_ValueChanged applies at commit time, but live, for text that was typed
+    // and never committed. See TruncateToFractionDigits.
+    private static double ReadCommittedOrTypedValue(NumberBox box, int fractionDigits)
     {
         var liveText = FindInputBoxText(box) ?? box.Text;
 
-        if (double.TryParse(liveText, NumberStyles.Any, CultureInfo.CurrentCulture, out var parsed) &&
+        // InvariantCulture, not CurrentCulture: confirmed empirically (isolated console test, not
+        // assumed) that CultureInfo.CurrentCulture here is actively dangerous on a machine whose
+        // Windows region uses ',' as its decimal separator and '.' as its thousands separator (e.g.
+        // de-DE, ro-RO) - NumberStyles.Any's AllowThousands means double.TryParse doesn't reject a
+        // '.' it doesn't recognize as a decimal point, it silently treats it as a thousands separator
+        // and strips it instead: "32.5" parsed as TRUE with result 325, "59.999" parsed as TRUE with
+        // result 59999 - both wrong by roughly 1000x, not a parse failure. (A space-grouped culture
+        // like fr-FR instead fails outright - false/0 - which at least falls through safely to the
+        // box.Value fallback below.) Only SecondsBox ever has a literal '.' in its text at all (the
+        // other five fields are digits-only, so this swap changes nothing for them), and
+        // HookIntervalCharacterFilter's comma-to-'.' normalization guarantees SecondsBox's own Text
+        // never contains ',' either - so its Text is always canonically invariant-formatted
+        // regardless of the OS locale, and parsing it should be too, rather than depending on
+        // whatever the OS happens to be set to.
+        if (double.TryParse(liveText, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed) &&
             !double.IsNaN(parsed))
         {
-            return Math.Clamp(parsed, box.Minimum, box.Maximum);
+            var clamped = Math.Clamp(parsed, box.Minimum, box.Maximum);
+            return TruncateToFractionDigits(clamped, fractionDigits);
         }
 
-        return double.IsNaN(box.Value) ? 0 : box.Value;
+        return double.IsNaN(box.Value) ? 0 : TruncateToFractionDigits(box.Value, fractionDigits);
     }
 
-    private static string? FindInputBoxText(DependencyObject root)
+    /// <summary>
+    /// Truncates (floors toward zero - e.g. 56.8 -> 56, never rounds to 57) value to fractionDigits
+    /// decimal places. Shared by every interval-field truncation path (ReadCommittedOrTypedValue,
+    /// IntervalBox_ValueChanged, AdvancedIntervalBox_ValueChanged, AdvancedIntervalInputBox_TextChanged)
+    /// so the "truncate, don't round" rule lives in exactly one place. NumberBox's own
+    /// NumberFormatter/FractionDigits can't substitute for this: that only affects the displayed Text
+    /// (via NumberBox's internal UpdateTextToValue), never writes back into .Value, and rounds rather
+    /// than truncates regardless of configuration.
+    /// </summary>
+    private static double TruncateToFractionDigits(double value, int fractionDigits)
+    {
+        var scale = Math.Pow(10, fractionDigits);
+        return Math.Truncate(value * scale) / scale;
+    }
+
+    private static string? FindInputBoxText(DependencyObject root) => FindInputBox(root)?.Text;
+
+    // Used both to read live, uncommitted text (ReadCommittedOrTypedValue/FindInputBoxText above) and,
+    // for the four Advanced interval NumberBoxes, to hook the inner TextBox's own live TextChanged
+    // event directly (see InitializeAdvancedIntervalLiveSync) - NumberBox.ValueChanged only fires on
+    // commit (blur/Enter/programmatic set), never on every keystroke, but this inner TextBox is a real
+    // TextBox under the hood, so its own TextChanged fires live.
+    private static TextBox? FindInputBox(DependencyObject root)
     {
         var count = VisualTreeHelper.GetChildrenCount(root);
         for (var i = 0; i < count; i++)
@@ -719,10 +1188,10 @@ public sealed partial class MainWindow : Window
             var child = VisualTreeHelper.GetChild(root, i);
             if (child is TextBox { Name: "InputBox" } inputBox)
             {
-                return inputBox.Text;
+                return inputBox;
             }
 
-            if (FindInputBoxText(child) is { } found)
+            if (FindInputBox(child) is { } found)
             {
                 return found;
             }
@@ -747,6 +1216,7 @@ public sealed partial class MainWindow : Window
         _isProgrammaticToggleOff = false;
 
         _engine.Stop();
+        _trayIconService.UpdateState(isRunning: false, isPaused: false, mode: CurrentSelectedMode);
         _taskbarProgressService.Clear();
         _lastTaskbarProgress = 0;
 
@@ -778,7 +1248,7 @@ public sealed partial class MainWindow : Window
             // Shows the counter result instead of plain "Off" only when the setting is on AND at
             // least one counted action actually happened; otherwise it falls back to "Off" exactly
             // as before.
-            var text = ShowActionCounterToggle.IsOn && _completedActionCount > 0
+            var text = _settingsPanel.ShowActionCounter && _completedActionCount > 0
                 ? $"Stopped after {FormatActionCount(_completedActionCount, _runningMode)}"
                 : "Off";
             SetStatusText(text, StatusTone.Muted);
@@ -833,7 +1303,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var showCounter = ShowActionCounterToggle.IsOn && !_isPointerOverPowerButton && _completedActionCount > 0;
+        var showCounter = _settingsPanel.ShowActionCounter && !_isPointerOverPowerButton && _completedActionCount > 0;
 
         PowerToggleLabel.Text = showCounter ? FormatActionCount(_completedActionCount, _runningMode) : "Stop";
         PowerToggleIcon.Visibility = showCounter ? Visibility.Collapsed : Visibility.Visible;
@@ -912,6 +1382,22 @@ public sealed partial class MainWindow : Window
 
     private void ApplyEngineStatus(StatusChangedEventArgs e)
     {
+        // Guards against a race in the countdown-heavy paths (Click mode's startup grace, Spin
+        // mode's pause-on-movement resume countdown): the engine's background loop reports the
+        // current tick (ReportStatus -> StatusChanged -> DispatcherQueue.TryEnqueue) and only then
+        // awaits its next Task.Delay - so a Stop() that lands on the UI thread during that delay
+        // (e.g. PowerToggleButton_Unchecked, fired here by the tray's "Stop" item just as easily as
+        // a real button click) can flip _engine.IsRunning false and set the "Off"/counter status
+        // *before* that already-queued callback gets its turn to run. Without this check, the stale
+        // callback would still fire afterward and stomp the just-set "Off" text with the countdown
+        // text it captured (and would also re-mark the tray icon as running via the
+        // isRunning: true below). Same guard protects the ReleaseStatusHoldAfterDelayAsync ->
+        // ApplyEngineStatus(pending) call site.
+        if (!_engine.IsRunning)
+        {
+            return;
+        }
+
         var tone = e.Kind switch
         {
             StatusKind.Starting => StatusTone.Success,
@@ -922,6 +1408,7 @@ public sealed partial class MainWindow : Window
         };
         SetStatusText(e.Text, tone);
         UpdateTaskbarProgress(e);
+        _trayIconService.UpdateState(isRunning: true, isPaused: e.Kind == StatusKind.Paused, mode: _runningMode);
     }
 
     /// <summary>
@@ -970,7 +1457,26 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void ModeSwitchButton_Click(object sender, RoutedEventArgs e)
     {
-        _isSpinModeSelected = !_isSpinModeSelected;
+        SetSelectedMode(_isSpinModeSelected ? AutomationMode.Click : AutomationMode.Spin);
+    }
+
+    /// <summary>
+    /// Sets the selected Auto Click/Spin mode to a specific value, as opposed to
+    /// ModeSwitchButton_Click's "flip to whichever mode isn't currently selected" - shared by that
+    /// click handler above and by the tray context menu's "Start Auto Click"/"Start Spin Mode" items
+    /// (see TrayIconService_StartRequested), which need to force one specific mode rather than toggle
+    /// it. No-ops if the requested mode is already selected, so a tray-driven start in the mode that's
+    /// already selected doesn't replay the switch animation/effects for nothing.
+    /// </summary>
+    private void SetSelectedMode(AutomationMode mode)
+    {
+        var isSpin = mode == AutomationMode.Spin;
+        if (_isSpinModeSelected == isSpin)
+        {
+            return;
+        }
+
+        _isSpinModeSelected = isSpin;
         UpdateModeIndicators();
         (_isSpinModeSelected ? SpinModePopStoryboard : ClickModePopStoryboard).Begin();
         (_isSpinModeSelected ? SpinModeIconSpinStoryboard : ClickModeIconWiggleStoryboard).Begin();
@@ -981,6 +1487,10 @@ public sealed partial class MainWindow : Window
         UpdateAutoStopButtonLabel();
 
         ConfigService.Update(c => c.LastMode = _isSpinModeSelected ? "Spin" : "Click");
+
+        // Keeps the tray tooltip's mode name live even while inactive, since the mode selection can
+        // change with no Start/Stop in between (see TrayIconService.UpdateState's other call sites).
+        _trayIconService.UpdateState(isRunning: _engine.IsRunning, isPaused: false, mode: mode);
     }
 
     private static readonly Thickness NoModeBoxBorder = new(0);
@@ -1016,7 +1526,18 @@ public sealed partial class MainWindow : Window
         ApplySelectedModeBoxStyle(ClickModeBox, isSelected: !_isSpinModeSelected, accent);
         ApplySelectedModeBoxStyle(SpinModeBox, isSelected: _isSpinModeSelected, accent);
 
-        ModeSubtitleTextBlock.Text = _isSpinModeSelected ? "Spin mode" : "Auto click";
+        // Leaves the subtitle alone while Settings is the active/transitioning-to screen (see
+        // ShowSettingsOverlay, which sets it to "Settings") - otherwise a mode change triggered while
+        // Settings is open (e.g. the tray menu's "Start Auto Click"/"Start Spin Mode", via
+        // SetSelectedMode) would stomp it back to the mode name despite Settings still being what's
+        // actually on screen. SettingsOverlay stays Visible for the whole time Settings is open or
+        // mid-transition either way (see AnimatePanelTransition), only going Collapsed once fully back
+        // on the main screen, so this check covers both states correctly.
+        if (SettingsOverlay.Visibility != Visibility.Visible)
+        {
+            ModeSubtitleTextBlock.Text = _isSpinModeSelected ? "Spin mode" : "Auto click";
+        }
+
         AutomationProperties.SetName(
             ModeSwitchButton,
             _isSpinModeSelected ? "Mode switch, Spin mode selected" : "Mode switch, Click mode selected");
@@ -1060,249 +1581,684 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void ThemeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_isInitializing)
-        {
-            return;
-        }
-
-        if (ThemeComboBox.SelectedItem is ComboBoxItem { Tag: string theme })
-        {
-            ApplyTheme(theme);
-            ConfigService.Update(c => c.Theme = theme);
-        }
-    }
-
     /// <summary>
-    /// If the Settings flyout closes (light-dismiss, clicking elsewhere, etc.) while mid-recording,
-    /// cancel the capture exactly like Escape would - otherwise _isRecordingHotkey stays stuck true,
-    /// HotkeyButton_Click's re-entry guard permanently no-ops on it, and the label is left showing
-    /// "Press a key combination…" forever instead of the actual current hotkey.
+    /// Syncs _isRandomizeIntervalEnabled from RandomizeIntervalButton.IsChecked (the real source of
+    /// truth now that this is a ToggleButton) and refreshes the button's own indicator.
+    /// RandomizeIntervalButton is locked (IsEnabled=false) via SetInputsEnabled while automation is
+    /// running, same as MinutesBox/SecondsBox/ModeSwitchButton - so this can only ever fire while
+    /// idle, and the setting can't change out from under an in-progress run.
     /// </summary>
-    private void SettingsFlyout_Closed(object? sender, object e)
+    private void RandomizeIntervalButton_CheckedChanged(object sender, RoutedEventArgs e)
     {
-        if (!_isRecordingHotkey)
-        {
-            return;
-        }
-
-        _isRecordingHotkey = false;
-        HotkeyButtonLabel.Text = FormatHotkey(_hotkeyModifiers, _hotkeyKey);
+        _isRandomizeIntervalEnabled = RandomizeIntervalButton.IsChecked == true;
+        UpdateRandomizeIntervalIndicator();
     }
 
     /// <summary>
-    /// Enters hotkey-recording mode: the next key HotkeyButton_KeyDown sees (that isn't itself a bare
-    /// modifier) becomes the new global hotkey. Ignored while already recording, so a second click
-    /// mid-capture can't start a redundant/overlapping capture.
-    /// </summary>
-    private void HotkeyButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_isRecordingHotkey)
-        {
-            return;
-        }
-
-        _isRecordingHotkey = true;
-        HotkeyErrorTextBlock.Visibility = Visibility.Collapsed;
-        HotkeyButtonLabel.Text = "Press a key combination…";
-    }
-
-    /// <summary>
-    /// Captures the next key while recording: Escape cancels (reverts the label, keeps the previous
-    /// hotkey registered/persisted, no save); a bare modifier key (Ctrl/Alt/Shift/Win alone) is
-    /// ignored so recording keeps waiting for the actual key; any other key finalizes the combination
-    /// together with whatever modifiers are currently held (queried via InputKeyboardSource, the
-    /// WinUI3-desktop equivalent of UWP's CoreWindow.GetKeyState). Marks every key while recording as
-    /// Handled so the button's own default key handling (e.g. Space/Enter invoking Click) doesn't
-    /// interfere with capture.
+    /// Sets RandomizeIntervalIcon's Foreground and Opacity to match _isRandomizeIntervalEnabled and
+    /// RandomizeIntervalButton.IsEnabled - always explicit local values, never left to inherit from
+    /// the ContentPresenter (whose Foreground the default ToggleButton ControlTemplate re-targets to
+    /// ToggleButtonForegroundChecked while Checked) and never ClearValue'd.
     ///
-    /// On success: registers immediately (GlobalHotkeyService.TryRegister unregisters the old one
-    /// first), persists it, and updates the label - "save" is implicit in a successful capture, no
-    /// separate confirm step, matching how modern Windows shortcut editors behave. On failure (the
-    /// combination is already claimed by another app): rolls back to the previous hotkey so the app
-    /// is never left with nothing registered, and shows an inline error instead of persisting.
+    /// Three states:
+    ///   - Idle (Unchecked, unlocked): Foreground = PrimaryBrushSource (TextFillColorPrimaryBrush,
+    ///     matching IntervalCaptionTextBlock's own undimmed base color - white in Dark theme, black in
+    ///     Light theme), Opacity = 1. Needs to stay clearly brighter than the "INTERVAL" caption
+    ///     beside it (IntervalCaptionTextBlock, which sits at a constant Opacity = 0.6 - see
+    ///     IntervalCaptionLabelStyle) so the icon still visibly reads as an interactive button/toggle,
+    ///     not a plain label.
+    ///   - Checked AND unlocked (sitting on the accent-filled pill): Foreground = OnAccentBrushSource
+    ///     (TextOnAccentFillColorPrimaryBrush - the same brush the template itself uses for
+    ///     ToggleButtonForegroundChecked: black in Dark theme, white in Light theme), Opacity = 1.
+    ///     This is the only state where the icon actually sits on a filled accent background, so it's
+    ///     the only state that needs the accent-contrast color.
+    ///   - Locked (automation running), regardless of Checked state: Foreground = DisabledBrushSource
+    ///     (TextFillColorDisabledBrush), Opacity = 0.6 - the exact same Foreground/Opacity combination
+    ///     IntervalCaptionLabelStyle's own Disabled VisualState uses for the "INTERVAL" caption beside
+    ///     it. Deliberately identical regardless of Checked state - this used to differ (Locked+Checked
+    ///     stayed at PrimaryBrushSource/0.5, brighter than Locked+Unchecked's DisabledBrushSource/0.6),
+    ///     on the theory that the brighter look helped signal "still on while locked". That backfired
+    ///     once a second button that briefly existed here (AdvancedIntervalDisplayButton, styled
+    ///     identically, since removed - see SettingsPanel's "Display advanced interval" toggle
+    ///     instead) could sit right next to this one in a different Checked state while both were
+    ///     locked at once: whichever one happened to be Checked rendered visibly brighter than the
+    ///     other for no reason a user could infer, since both are simply "locked, nothing you can do
+    ///     about it right now" - confirmed via side-by-side pixel-contrast comparison in both themes at
+    ///     the time, and the fix stayed even after that button did not. RandomizeIntervalButton's own outline
+    ///     (ToggleButtonBorderBrushCheckedDisabled, present only in the Locked+Checked case) is what
+    ///     communicates on/off while locked here, not the icon - keeping OnAccentBrushSource would also
+    ///     be wrong regardless, since the pill background goes Transparent once locked (see
+    ///     ToggleButtonBackgroundCheckedDisabled in RandomizeIntervalButton.Resources), and that brush's
+    ///     accent-contrast color would render close to invisible against the app's own background
+    ///     instead.
+    ///
+    /// Also updates the button's AutomationProperties.Name/ToolTip so screen readers and tooltips
+    /// announce the current state, not just "Randomize interval" with no indication of on/off.
     /// </summary>
-    private void HotkeyButton_KeyDown(object sender, KeyRoutedEventArgs e)
+    private void UpdateRandomizeIntervalIndicator()
     {
-        if (!_isRecordingHotkey)
+        bool isLocked = !RandomizeIntervalButton.IsEnabled;
+        bool isCheckedAndUnlocked = !isLocked && _isRandomizeIntervalEnabled;
+
+        RandomizeIntervalIcon.Foreground = isCheckedAndUnlocked
+            ? OnAccentBrushSource.Foreground
+            : isLocked
+                ? DisabledBrushSource.Foreground
+                : PrimaryBrushSource.Foreground;
+        RandomizeIntervalIcon.Opacity = isCheckedAndUnlocked ? 1 : isLocked ? 0.6 : 0.8;
+
+        AutomationProperties.SetName(
+            RandomizeIntervalButton,
+            _isRandomizeIntervalEnabled ? "Randomize interval, On" : "Randomize interval, Off");
+        ToolTipService.SetToolTip(
+            RandomizeIntervalButton,
+            _isRandomizeIntervalEnabled ? "Randomize interval: On" : "Randomize interval: Off");
+    }
+
+    /// <summary>
+    /// Applies _settingsPanel.ShowAdvancedIntervalDisplay - SettingsPanel's own persisted "Display
+    /// advanced interval" toggle, the sole source of truth now that AdvancedIntervalDisplayButton
+    /// has been removed from the main window entirely (see the header row's own comment in
+    /// MainWindow.xaml) - by syncing _isAdvancedIntervalDisplayEnabled, swapping
+    /// BasicIntervalRow/AdvancedIntervalRow's Visibility, and - only when switching TO Advanced -
+    /// populating the four Hours/Minutes/Seconds/Milliseconds fields from MinutesBox.Value/
+    /// SecondsBox.Value (see PopulateAdvancedIntervalFieldsFromBasic). No equivalent population runs
+    /// when switching back to Basic: MinutesBox.Value/SecondsBox.Value are kept continuously up to
+    /// date by AdvancedIntervalInputBox_TextChanged the entire time Advanced is showing, not just at
+    /// the moment of switching away from it, so they're already correct.
+    ///
+    /// Called once at startup from LoadConfigIntoUi (after MinutesBox/SecondsBox are loaded) and again
+    /// every time SettingsPanel.ShowAdvancedIntervalDisplayChanged fires. Persistence itself already
+    /// happens in SettingsPanel.ShowAdvancedIntervalDisplayToggle_Toggled, so this method doesn't
+    /// duplicate it - unlike the old AdvancedIntervalDisplayButton_CheckedChanged this replaces, there's
+    /// no second UI control left to keep in sync with, so no _isInitializing guard is needed either.
+    /// </summary>
+    private void UpdateAdvancedIntervalDisplayMode()
+    {
+        _isAdvancedIntervalDisplayEnabled = _settingsPanel.ShowAdvancedIntervalDisplay;
+
+        BasicIntervalRow.Visibility = _isAdvancedIntervalDisplayEnabled ? Visibility.Collapsed : Visibility.Visible;
+        AdvancedIntervalRow.Visibility = _isAdvancedIntervalDisplayEnabled ? Visibility.Visible : Visibility.Collapsed;
+
+        if (_isAdvancedIntervalDisplayEnabled)
         {
+            PopulateAdvancedIntervalFieldsFromBasic();
+        }
+    }
+
+    /// <summary>
+    /// Basic -> Advanced conversion (see UpdateAdvancedIntervalDisplayMode): converts
+    /// MinutesBox.Value/SecondsBox.Value into whole Hours/Minutes/Seconds/Milliseconds via an
+    /// all-integer-milliseconds intermediate, so there's no floating-point drift (e.g. Minutes=60,
+    /// Seconds=30 -> totalMs=3,630,000 -> 1h 0m 30s 0ms exactly). Guarded by
+    /// _isSyncingAdvancedIntervalFields so the ValueChanged/inner-TextChanged handlers these four
+    /// Value writes fire (AdvancedIntervalBox_ValueChanged and AdvancedIntervalInputBox_TextChanged)
+    /// don't immediately try to convert back and overwrite MinutesBox/SecondsBox with a transient,
+    /// partially-populated total.
+    /// </summary>
+    private void PopulateAdvancedIntervalFieldsFromBasic()
+    {
+        var minutes = double.IsNaN(MinutesBox.Value) ? 0 : MinutesBox.Value;
+        var seconds = double.IsNaN(SecondsBox.Value) ? 0 : SecondsBox.Value;
+        var totalMs = (long)Math.Round((minutes * 60 + seconds) * 1000);
+
+        var hours = totalMs / 3_600_000;
+        var mins = totalMs % 3_600_000 / 60_000;
+        var secs = totalMs % 60_000 / 1000;
+        var millis = totalMs % 1000;
+
+        _isSyncingAdvancedIntervalFields = true;
+        HoursBox.Value = hours;
+        AdvancedMinutesBox.Value = mins;
+        AdvancedSecondsBox.Value = secs;
+        MillisecondsBox.Value = millis;
+        _isSyncingAdvancedIntervalFields = false;
+    }
+
+    /// <summary>
+    /// Sets up the four Advanced interval NumberBoxes' live-sync/MaxLength/clear-button-suppression/
+    /// blank-coercion hooks (see HookAdvancedIntervalBoxLiveSync for the mechanism and why), then does
+    /// the equivalent MaxLength/clear-button/blank-coercion setup for Basic's MinutesBox/SecondsBox,
+    /// which don't need the live-sync part since they're already the canonical source. Called once from
+    /// the constructor, after InitializeComponent/LoadConfigIntoUi.
+    /// </summary>
+    private void InitializeAdvancedIntervalLiveSync()
+    {
+        HookAdvancedIntervalBoxLiveSync(HoursBox, maxLength: 7);
+        HookAdvancedIntervalBoxLiveSync(AdvancedMinutesBox, maxLength: 2);
+        HookAdvancedIntervalBoxLiveSync(AdvancedSecondsBox, maxLength: 2);
+        HookAdvancedIntervalBoxLiveSync(MillisecondsBox, maxLength: 3);
+
+        // Basic's MinutesBox/SecondsBox don't need the live-sync wiring above (they're already the
+        // canonical source, not derived from anything else), but they still need their own MaxLength cap
+        // - 8 for Minutes (matching its Maximum's own digit count, "99999959") and 6 for Seconds
+        // (matching "59.999", decimal point included) - and share the same inner TextBox template as the
+        // four Advanced fields, so they get the same clear-button restyling and blank-to-zero coercion
+        // too (see StyleClearButton/HookBlankCoercion).
+        SetInputBoxMaxLength(MinutesBox, maxLength: 8, allowDecimalPoint: false);
+        SetInputBoxMaxLength(SecondsBox, maxLength: 6, allowDecimalPoint: true);
+        StyleClearButton(MinutesBox);
+        StyleClearButton(SecondsBox);
+        HookBlankCoercion(MinutesBox);
+        HookBlankCoercion(SecondsBox);
+    }
+
+    private static void SetInputBoxMaxLength(NumberBox box, int maxLength, bool allowDecimalPoint)
+    {
+        box.ApplyTemplate();
+
+        if (FindInputBox(box) is not { } inputBox)
+        {
+            box.Loaded += (_, _) => SetInputBoxMaxLength(box, maxLength, allowDecimalPoint);
             return;
         }
 
-        e.Handled = true;
+        inputBox.MaxLength = maxLength;
+        HookIntervalCharacterFilter(inputBox, allowDecimalPoint);
+    }
 
-        if (e.Key == VirtualKey.Escape)
+    /// <summary>
+    /// Restricts one NumberBox's inner InputBox to digits 0-9 as characters are actually typed - used
+    /// for all six interval fields plus AutoStopCountBox (the "clicks/spins" count field in
+    /// AutoStopDialog) - and, only when allowDecimalPoint is true (SecondsBox alone, the one field of
+    /// the six interval ones that supports fractional values - see BasicIntervalRow's own XAML
+    /// comment), a single '.'. NumberBox's
+    /// own Minimum/Maximum/NumberFormatter only affect clamping/display at commit time (confirmed
+    /// empirically elsewhere in this file - see IntervalBox_ValueChanged/AdvancedIntervalBox_ValueChanged's
+    /// doc comments) and do nothing to stop arbitrary characters from being typed into the live Text in
+    /// the first place.
+    ///
+    /// TextBox.BeforeTextChanging is the idiomatic hook for this and was confirmed empirically (not
+    /// assumed) to fire here, synchronously, before the proposed text is applied/rendered - both for
+    /// hardware-keyboard typing and for the field's own programmatic Text assignments elsewhere in this
+    /// file (HookBlankCoercion's/AdvancedIntervalInputBox_TextChanged's "0" snap-back, StyleClearButton's
+    /// clear-text button) - unlike PreviewKeyDown/KeyDown, which don't reliably catch paste or IME
+    /// composition. Setting args.Cancel = true rejects the whole pending change and leaves Text exactly
+    /// as it was, so a rejected keystroke (a letter, symbol, '-', or a second '.') never partially applies.
+    ///
+    /// Empty text always passes through unfiltered (args.NewText == "") so Backspace/Delete/
+    /// Ctrl+A+Delete can still clear the field down to blank - the various blank-to-"0" coercions run
+    /// afterward, in their own TextChanged handlers, and that "0" is itself always valid (a single
+    /// digit) regardless of allowDecimalPoint, so it's never at risk of being rejected by this same
+    /// filter it triggers.
+    ///
+    /// Also sets InputScope="Number" on this same inner InputBox as a complementary touch-keyboard/IME
+    /// hint (shows a numeric glyph layout, e.g. on a touch/tablet keyboard) - as a mere hint, this
+    /// applies uniformly to all six fields including SecondsBox: InputScopeNameValue has no "Decimal"
+    /// member (confirmed empirically - referencing it is a compile error, CS0117), and this does NOT
+    /// substitute for the BeforeTextChanging filtering above regardless, since InputScope only affects
+    /// soft input methods and has no effect on what a hardware keyboard can type. NumberBox itself has
+    /// no public, XAML-settable InputScope member in this WindowsAppSDK version - confirmed empirically:
+    /// declaring InputScope="Number" directly on the NumberBox in XAML fails the XAML compiler with
+    /// WMC0011 "Unknown member 'InputScope' on element 'NumberBox'", even though NumberBox's own default
+    /// ControlTemplate template-binds this exact InputBox part's InputScope to it (see generic.xaml) -
+    /// so it's set here in code, directly on the real TextBox part, instead.
+    /// </summary>
+    private static void HookIntervalCharacterFilter(TextBox inputBox, bool allowDecimalPoint)
+    {
+        inputBox.InputScope = new InputScope
         {
-            _isRecordingHotkey = false;
-            HotkeyButtonLabel.Text = FormatHotkey(_hotkeyModifiers, _hotkeyKey);
-            return;
-        }
+            Names = { new InputScopeName(InputScopeNameValue.Number) }
+        };
 
-        if (IsModifierKey(e.Key))
+        inputBox.BeforeTextChanging += (_, args) =>
         {
-            return;
-        }
-
-        uint modifiers = 0;
-        if (IsKeyDown(VirtualKey.Control))
-        {
-            modifiers |= NativeMethods.MOD_CONTROL;
-        }
-
-        if (IsKeyDown(VirtualKey.Menu))
-        {
-            modifiers |= NativeMethods.MOD_ALT;
-        }
-
-        if (IsKeyDown(VirtualKey.Shift))
-        {
-            modifiers |= NativeMethods.MOD_SHIFT;
-        }
-
-        if (IsKeyDown(VirtualKey.LeftWindows) || IsKeyDown(VirtualKey.RightWindows))
-        {
-            modifiers |= NativeMethods.MOD_WIN;
-        }
-
-        var virtualKey = (uint)e.Key;
-
-        _isRecordingHotkey = false;
-
-        var previousModifiers = _hotkeyModifiers;
-        var previousKey = _hotkeyKey;
-
-        if (_hotkeyService.TryRegister(modifiers, virtualKey))
-        {
-            _hotkeyModifiers = modifiers;
-            _hotkeyKey = virtualKey;
-            HotkeyButtonLabel.Text = FormatHotkey(modifiers, virtualKey);
-            HotkeyErrorTextBlock.Visibility = Visibility.Collapsed;
-            ConfigService.Update(c =>
+            var text = args.NewText;
+            if (text.Length == 0)
             {
-                c.HotkeyModifiers = modifiers;
-                c.HotkeyKey = virtualKey;
-            });
-        }
-        else
-        {
-            _hotkeyService.TryRegister(previousModifiers, previousKey);
-            HotkeyButtonLabel.Text = FormatHotkey(previousModifiers, previousKey);
-            HotkeyErrorTextBlock.Text = "That shortcut is already in use by another app.";
-            HotkeyErrorTextBlock.Visibility = Visibility.Visible;
-        }
-    }
+                return;
+            }
 
-    private static bool IsModifierKey(VirtualKey key) => key is
-        VirtualKey.Control or VirtualKey.LeftControl or VirtualKey.RightControl or
-        VirtualKey.Menu or VirtualKey.LeftMenu or VirtualKey.RightMenu or
-        VirtualKey.Shift or VirtualKey.LeftShift or VirtualKey.RightShift or
-        VirtualKey.LeftWindows or VirtualKey.RightWindows;
+            // SecondsBox alone (allowDecimalPoint) also accepts ',' as a decimal separator,
+            // unconditionally - not locale-gated - normalized down to a canonical '.' so nothing
+            // downstream (NumberBox's own commit-time formatter, ReadCommittedOrTypedValue's/
+            // ReadLiveAdvancedFieldValue's double.TryParse reads) ever has to reason about ','
+            // itself. TextBoxBeforeTextChangingEventArgs.NewText has no public setter - confirmed
+            // empirically (CS0200: "Property or indexer ... cannot be assigned to -- it is read
+            // only") - so this can't just rewrite args.NewText in place like a mutable buffer.
+            // Instead: validate against a normalized copy, and if that copy is valid, Cancel this
+            // edit outright (so the literal ',' this keystroke would have produced never applies)
+            // and queue the already-normalized Text back onto the dispatcher instead - which runs
+            // once this event returns and the (cancelled, so still previous) Text has settled.
+            // Restores the caret to where it would have landed had a plain '.' been typed/pasted
+            // at this same location instead of ',' - computed from the old selection plus how many
+            // characters this edit is inserting (NewText's length above what survives after the old
+            // selection is removed), not just assumed to be a single character, so this still lands
+            // correctly for a multi-character paste containing a comma, not just a single keystroke.
+            var normalized = allowDecimalPoint && text.Contains(',') ? text.Replace(',', '.') : text;
 
-    private static bool IsKeyDown(VirtualKey key) =>
-        InputKeyboardSource.GetKeyStateForCurrentThread(key).HasFlag(CoreVirtualKeyStates.Down);
+            var sawDecimalPoint = false;
+            foreach (var ch in normalized)
+            {
+                if (ch is >= '0' and <= '9')
+                {
+                    continue;
+                }
 
-    /// <summary>
-    /// Formats a modifiers bitmask + virtual-key code as a display string like "F6" or
-    /// "Ctrl+Shift+F6". VirtualKey's own ToString() already reads correctly for the keys realistic
-    /// hotkeys use (letters, digits, function keys), so no separate name table is needed.
-    /// </summary>
-    private static string FormatHotkey(uint modifiers, uint virtualKey)
-    {
-        var parts = new List<string>();
-        if ((modifiers & NativeMethods.MOD_CONTROL) != 0)
-        {
-            parts.Add("Ctrl");
-        }
+                if (allowDecimalPoint && ch == '.' && !sawDecimalPoint)
+                {
+                    sawDecimalPoint = true;
+                    continue;
+                }
 
-        if ((modifiers & NativeMethods.MOD_ALT) != 0)
-        {
-            parts.Add("Alt");
-        }
+                args.Cancel = true;
+                return;
+            }
 
-        if ((modifiers & NativeMethods.MOD_SHIFT) != 0)
-        {
-            parts.Add("Shift");
-        }
+            if (!ReferenceEquals(normalized, text))
+            {
+                args.Cancel = true;
 
-        if ((modifiers & NativeMethods.MOD_WIN) != 0)
-        {
-            parts.Add("Win");
-        }
+                var oldText = inputBox.Text;
+                var oldSelectionStart = inputBox.SelectionStart;
+                var oldSelectionLength = inputBox.SelectionLength;
+                var insertedLength = text.Length - (oldText.Length - oldSelectionLength);
+                var newCaretPosition = Math.Clamp(oldSelectionStart + insertedLength, 0, normalized.Length);
 
-        parts.Add(((VirtualKey)virtualKey).ToString());
-        return string.Join("+", parts);
-    }
-
-    private void PauseOnMovementToggle_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (_isInitializing)
-        {
-            return;
-        }
-
-        ResetStatusToOffIfNotRunning();
-        ConfigService.Update(c => c.PauseOnMovement = PauseOnMovementToggle.IsOn);
+                inputBox.DispatcherQueue.TryEnqueue(() =>
+                {
+                    inputBox.Text = normalized;
+                    inputBox.SelectionStart = newCaretPosition;
+                    inputBox.SelectionLength = 0;
+                });
+            }
+        };
     }
 
     /// <summary>
-    /// Updates the tray icon's visibility immediately (rather than only taking effect on the next
-    /// close/reopen) and persists the setting. See AppWindow_Closing for the actual close-vs-hide
-    /// behavior this drives.
+    /// Keeps a NumberBox from ever sitting blank: whenever its inner InputBox's live text becomes empty
+    /// (Backspace/Delete/Ctrl+A+Delete, or the built-in clear-text "X" button - see StyleClearButton,
+    /// which just clears Text and does nothing else), immediately sets the box's Value to 0. Setting
+    /// Value synchronously re-renders the inner TextBox's Text to "0" (NumberBox's own commit pipeline),
+    /// so this also selects that new text (SelectAll) - so if the user is actually mid-replace (e.g.
+    /// select-all then type a new number) the very next keystroke overwrites the "0" instead of
+    /// appending after it (which would otherwise silently turn "0" + "4" into "04"). Used for
+    /// MinutesBox/SecondsBox, which have no other TextChanged hook; the four Advanced fields get the
+    /// equivalent check inline in AdvancedIntervalInputBox_TextChanged instead, since they already have
+    /// a live TextChanged handler for their own cross-field sync.
     /// </summary>
-    private void CloseToTrayToggle_Toggled(object sender, RoutedEventArgs e)
+    private static void HookBlankCoercion(NumberBox box)
     {
-        if (_isInitializing)
+        box.ApplyTemplate();
+
+        if (FindInputBox(box) is not { } inputBox)
         {
+            box.Loaded += (_, _) => HookBlankCoercion(box);
             return;
         }
 
-        _closeToTray = CloseToTrayToggle.IsOn;
-        UpdateTrayIconVisibility();
-        ConfigService.Update(c => c.CloseToTray = _closeToTray);
+        inputBox.TextChanged += (_, _) =>
+        {
+            if (inputBox.Text.Length == 0)
+            {
+                // Setting box.Value here does NOT re-render the InputBox's Text while it still has
+                // focus (confirmed empirically: NumberBox only reconciles Text from Value at
+                // LostFocus/Enter, precisely so it doesn't stomp on live typing) - so the field would
+                // stay visually blank until the user tabbed/clicked away, even though .Value was
+                // already 0 underneath. Setting Text directly is what actually shows "0" right away;
+                // NumberBox's own commit-time parse then reads this same "0" back into Value normally
+                // once the box eventually does lose focus, no different than the user having typed it.
+                inputBox.Text = "0";
+                inputBox.SelectAll();
+            }
+        };
+    }
+
+    private static void StyleClearButton(NumberBox box)
+    {
+        box.ApplyTemplate();
+
+        if (FindInputBox(box) is not { } inputBox)
+        {
+            box.Loaded += (_, _) => StyleClearButton(box);
+            return;
+        }
+
+        StyleClearButton(inputBox);
+    }
+
+    private void HookAdvancedIntervalBoxLiveSync(NumberBox box, int maxLength)
+    {
+        // This runs in the constructor while AdvancedIntervalRow still defaults to
+        // Visibility="Collapsed" (unless the persisted config already had Advanced enabled) - and a
+        // Collapsed subtree is skipped during layout, so box's ControlTemplate (and thus its inner
+        // "InputBox" part) normally wouldn't exist yet. Loaded fires once a FrameworkElement is
+        // connected to the tree regardless of Visibility, i.e. BEFORE that template gets applied here -
+        // so a Loaded-based fallback would fire too early, find no InputBox, and silently never hook,
+        // for the entire remainder of the session (Loaded doesn't fire again just because Visibility
+        // later changes). ApplyTemplate() sidesteps this by forcing the ControlTemplate to materialize
+        // synchronously right now, independent of layout/visibility.
+        box.ApplyTemplate();
+
+        if (FindInputBox(box) is not { } inputBox)
+        {
+            // Defense in depth in case ApplyTemplate ever isn't sufficient on its own (e.g. a future
+            // WinUI change reintroduces a layout dependency) - retries the whole hook, including another
+            // ApplyTemplate() call, once the box is actually loaded.
+            box.Loaded += (_, _) => HookAdvancedIntervalBoxLiveSync(box, maxLength);
+            return;
+        }
+
+        inputBox.MaxLength = maxLength;
+        inputBox.TextChanged += AdvancedIntervalInputBox_TextChanged;
+
+        // None of the four Advanced fields support fractional values (each is truncated to a whole
+        // number - see ReadLiveAdvancedFieldValue/AdvancedIntervalBox_ValueChanged), so allowDecimalPoint
+        // is always false here, unlike SecondsBox - see HookIntervalCharacterFilter's own doc comment.
+        HookIntervalCharacterFilter(inputBox, allowDecimalPoint: false);
+
+        // Suppressed, not styled-and-shown, for these four fields specifically - see
+        // SuppressClearButton's own doc comment for why (confirmed empirically non-clickable here,
+        // unlike Basic's MinutesBox/SecondsBox where StyleClearButton's equivalent button works fine).
+        SuppressClearButton(inputBox);
+
+        // box's own FontSize is deliberately 12 (see AdvancedIntervalRow's XAML comment) so its Header
+        // caption stays legible/consistently sized against its longest sibling ("Milliseconds") - but
+        // FontSize is an inherited property, so the inner InputBox's actual number text would otherwise
+        // shrink along with it too, even though there's plenty of room here for regular-sized digits.
+        // Setting FontSize directly on this TextBox (a distinct visual-tree element from the NumberBox
+        // itself) gives it its own local value, overriding what it would've inherited, without touching
+        // the Header presenter at all. 14 matches BasicIntervalRow's MinutesBox/SecondsBox, which never
+        // override FontSize and so render at WinUI's default ControlContentThemeFontSize.
+        inputBox.FontSize = 14;
     }
 
     /// <summary>
-    /// Turning this off immediately clears the taskbar progress bar (rather than leaving it frozen at
-    /// whatever it last showed until the run stops) since UpdateTaskbarProgress no-ops entirely while
-    /// _showTaskbarProgress is false and won't repaint it on its own.
+    /// Takes over driving the visibility of the built-in "clear text" (X) button that WinUI's TextBox
+    /// ControlTemplate shows once its "InputBox" part has focus and non-empty text, instead of trusting
+    /// the template's own show/hide logic - see below for why. Left at its default size/appearance
+    /// (regular rectangular footprint) - only used for Basic's MinutesBox/SecondsBox (via
+    /// StyleClearButton(NumberBox) below); the four Advanced fields use SuppressClearButton instead,
+    /// see that method's doc comment for why.
+    ///
+    /// Visibility: confirmed empirically that the template's own "ButtonVisible"/"ButtonCollapsed"
+    /// VisualStateManager states (which are supposed to show this button on focus + non-empty text)
+    /// don't fire reliably for every NumberBox configuration in this app - so this manages Visibility
+    /// explicitly via GotFocus/LosingFocus/TextChanged instead of depending on the template's own states.
+    /// Uses LosingFocus rather than LostFocus specifically to dodge a click-through race - see that
+    /// hookup's own comment below.
+    ///
+    /// Clicking the button clears Text same as always; HookBlankCoercion is what turns that resulting
+    /// blank state into "0" instead of leaving the field empty.
     /// </summary>
-    private void ShowTaskbarProgressToggle_Toggled(object sender, RoutedEventArgs e)
+    private static void StyleClearButton(TextBox inputBox)
     {
-        if (_isInitializing)
+        inputBox.ApplyTemplate();
+
+        if (FindDeleteButton(inputBox) is not { } deleteButton)
+        {
+            inputBox.Loaded += (_, _) => StyleClearButton(inputBox);
+            return;
+        }
+
+        void UpdateVisibility() =>
+            deleteButton.Visibility = inputBox.FocusState != FocusState.Unfocused && inputBox.Text.Length > 0
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+        inputBox.GotFocus += (_, _) => UpdateVisibility();
+        inputBox.TextChanged += (_, _) => UpdateVisibility();
+
+        // Deliberately LosingFocus, not LostFocus: clicking DeleteButton itself moves focus away from
+        // inputBox toward that same DeleteButton first (a Button takes pointer focus on press, before
+        // its own Click fires on release) - confirmed empirically that reacting to plain LostFocus by
+        // collapsing immediately raced with that click, hiding the button (and cancelling its own
+        // pointer-capture/Click) before Click ever got to fire, so clicking it silently did nothing.
+        // LosingFocus fires before focus actually moves and exposes where it's headed
+        // (NewFocusedElement), so this can tell "focus is leaving to DeleteButton, about to be clicked -
+        // don't hide out from under the click" apart from "focus is leaving somewhere else entirely -
+        // really hide it".
+        inputBox.LosingFocus += (_, e) =>
+        {
+            if (!ReferenceEquals(e.NewFocusedElement, deleteButton))
+            {
+                deleteButton.Visibility = Visibility.Collapsed;
+            }
+        };
+
+        UpdateVisibility();
+    }
+
+    /// <summary>
+    /// Permanently hides the built-in "clear text" (X) button for the four Advanced interval fields
+    /// (Hours/Minutes/Seconds/Milliseconds) specifically - NOT because it can't be made visible there
+    /// (StyleClearButton's Visibility-management approach above works fine at making it appear, sized
+    /// and positioned correctly per UI Automation), but because clicking it there turned out to be
+    /// inert: confirmed empirically, repeatedly, and by multiple independent methods (precise
+    /// coordinate-targeted real mouse clicks via SendInput at the button's own UI-Automation-reported
+    /// center, a grid of nearby coordinates covering and surrounding those bounds, and direct
+    /// UIA InvokePattern.Invoke() on the button element itself, bypassing screen coordinates entirely)
+    /// that clicking/invoking this button on any of the four Advanced fields never clears its text or
+    /// changes its value - even immediately, even after forcing a blur afterward to rule out a
+    /// display-refresh delay. The identical button on Basic's MinutesBox/SecondsBox (same control
+    /// template, same code path, confirmed via the same InvokePattern method) works correctly and
+    /// instantly every time. The one XAML difference between the two rows is
+    /// SpinButtonPlacementMode="Hidden" (Advanced) vs "Compact" (Basic) - suspected but not confirmed to
+    /// be what's suppressing hit-testing/event-routing to this button when spin buttons are hidden.
+    /// A button that's visible and looks clickable but silently does nothing is worse than no button at
+    /// all, so these four fields keep the old permanently-collapsed behavior instead: Visibility is
+    /// forced to Collapsed once, and - because the template's own "ButtonVisible" VisualState
+    /// re-animates it back to Visible on every relevant focus/text change regardless - a
+    /// RegisterPropertyChangedCallback snaps it straight back to Collapsed every time that happens,
+    /// rather than trying to fight the VisualStateManager with a one-time Setter. The never-blank rule
+    /// (HookBlankCoercion / AdvancedIntervalInputBox_TextChanged's own blank-to-"0" check) still applies
+    /// to these four fields regardless of this button's absence - Backspace/Delete/Ctrl+A+Delete alone
+    /// already coerce them to "0" live, which was the more important half of this feature.
+    /// </summary>
+    private static void SuppressClearButton(TextBox inputBox)
+    {
+        inputBox.ApplyTemplate();
+
+        if (FindDeleteButton(inputBox) is not { } deleteButton)
+        {
+            inputBox.Loaded += (_, _) => SuppressClearButton(inputBox);
+            return;
+        }
+
+        deleteButton.Visibility = Visibility.Collapsed;
+        deleteButton.RegisterPropertyChangedCallback(UIElement.VisibilityProperty, (sender, _) =>
+        {
+            if (sender is Button { Visibility: Visibility.Visible } button)
+            {
+                button.Visibility = Visibility.Collapsed;
+            }
+        });
+    }
+
+    private static Button? FindDeleteButton(DependencyObject root)
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is Button { Name: "DeleteButton" } deleteButton)
+            {
+                return deleteButton;
+            }
+
+            if (FindDeleteButton(child) is { } found)
+            {
+                return found;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Advanced -> Basic conversion, run continuously on every keystroke in any of the four
+    /// Hours/Minutes/Seconds/Milliseconds fields' own inner InputBox TextBox parts (see
+    /// InitializeAdvancedIntervalLiveSync) while Advanced display is showing - not just at the moment
+    /// the user switches back to Basic, and not just at commit. This is what keeps
+    /// MinutesBox.Value/SecondsBox.Value correct at all times, which matters because
+    /// PowerToggleButton_Checked's Start-time interval computation reads those two boxes (via
+    /// ReadCommittedOrTypedValue) unconditionally and is otherwise untouched by this feature - if the
+    /// advanced fields only converted back on toggle-off or on their own NumberBox.ValueChanged commit,
+    /// starting automation via hotkey while Advanced is still showing (which never blurs any field)
+    /// would silently use a stale interval from before the user's most recent, uncommitted edit here.
+    /// Writing into MinutesBox.Value/SecondsBox.Value fires their existing ValueChanged handler
+    /// (IntervalBox_ValueChanged) automatically, which is what actually persists the new interval to
+    /// ConfigService - this method deliberately doesn't duplicate that.
+    ///
+    /// Also coerces this field's own blank text straight to "0" the instant it goes empty (Backspace/
+    /// Delete/Ctrl+A+Delete - the built-in clear-text "X" button is suppressed on these four fields, see
+    /// SuppressClearButton) - same never-blank rule as HookBlankCoercion applies to
+    /// MinutesBox/SecondsBox, folded in here instead of a separate hook since these four fields already
+    /// have this live TextChanged handler wired for their own cross-field sync. This sets the InputBox's
+    /// Text directly (not sender.Value) - confirmed empirically that setting a NumberBox's Value while
+    /// its InputBox still has focus does NOT re-render that Text (NumberBox only reconciles Text from
+    /// Value at LostFocus/Enter, precisely so it doesn't stomp on live typing), so the field would stay
+    /// visually blank until the user tabbed/clicked away otherwise, even with .Value already sitting at
+    /// 0 underneath. Setting Text recurses back into this same handler once, harmlessly ("0" isn't
+    /// blank, so the nested call just re-runs the sync below with the same numbers) - SelectAll follows
+    /// it so that if the user is actually mid a select-all-then-retype edit, the very next keystroke
+    /// replaces that "0" instead of appending after it. ReadLiveAdvancedFieldValue already treated blank
+    /// as 0 for the cross-field sync below even before this change - this only fixes this field's own
+    /// displayed text, which previously stayed blank until an eventual commit (see
+    /// AdvancedIntervalBox_ValueChanged's matching NaN-to-0 coercion for that path).
+    ///
+    /// Each field is read independently via ReadLiveAdvancedFieldValue, which truncates to a whole
+    /// number and clamps to that field's own Minimum/Maximum - deliberately NOT written back into that
+    /// same field's own Value/Text from here (that visual snap-back is AdvancedIntervalBox_ValueChanged's
+    /// job, at commit, so it doesn't disrupt whatever the user is still actively typing mid-edit).
+    /// SecondsBox.Value takes the fractional remainder after whole minutes are removed (integer
+    /// division for minutes, so any leftover milliseconds land in the fractional seconds part instead)
+    /// - this is exactly why SecondsBox.Maximum had to move from 59.95 to 59.999 (see BasicIntervalRow's
+    /// XAML comment), or up to 49ms of precision typed here would be silently clamped away on write-back.
+    /// </summary>
+    private void AdvancedIntervalInputBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_isSyncingAdvancedIntervalFields || !_isAdvancedIntervalDisplayEnabled)
         {
             return;
         }
 
-        _showTaskbarProgress = ShowTaskbarProgressToggle.IsOn;
-        if (!_showTaskbarProgress)
+        if (sender is TextBox { Text.Length: 0 } inputBox)
         {
-            _taskbarProgressService.Clear();
+            inputBox.Text = "0";
+            inputBox.SelectAll();
         }
 
-        ConfigService.Update(c => c.ShowTaskbarProgress = _showTaskbarProgress);
+        var hours = ReadLiveAdvancedFieldValue(HoursBox);
+        var minutes = ReadLiveAdvancedFieldValue(AdvancedMinutesBox);
+        var seconds = ReadLiveAdvancedFieldValue(AdvancedSecondsBox);
+        var milliseconds = ReadLiveAdvancedFieldValue(MillisecondsBox);
+        var totalMs = hours * 3_600_000L + minutes * 60_000L + seconds * 1000L + milliseconds;
+
+        _isSyncingAdvancedIntervalFields = true;
+        MinutesBox.Value = totalMs / 60_000;
+        SecondsBox.Value = totalMs % 60_000 / 1000.0;
+        _isSyncingAdvancedIntervalFields = false;
     }
 
-    private void ShowActionCounterToggle_Toggled(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Reads one Advanced interval NumberBox's own live, uncommitted inner-InputBox text (not its
+    /// .Value, which lags until commit - same reasoning as ReadCommittedOrTypedValue above), truncates
+    /// it to a whole number, and clamps it to that box's own Minimum/Maximum. Empty/non-numeric/negative
+    /// text all fall back to/clamp to 0 rather than throwing, since the field can legitimately sit
+    /// empty or mid-edit while the user is typing.
+    ///
+    /// InvariantCulture, not CurrentCulture - see ReadCommittedOrTypedValue's own doc comment for the
+    /// empirically-confirmed reasoning (CurrentCulture silently mis-parses a '.'-containing string by
+    /// ~1000x on a comma-decimal Windows locale). Doesn't actually change behavior for these four
+    /// fields specifically - they're digits-only (HookIntervalCharacterFilter never allows '.' or ','
+    /// through for them), so there's never a separator character in play here either way - but keeping
+    /// every parse of these six fields' text on the same culture avoids a latent inconsistency.
+    /// </summary>
+    private static long ReadLiveAdvancedFieldValue(NumberBox box)
     {
-        if (_isInitializing)
+        var text = FindInputBoxText(box);
+        if (string.IsNullOrWhiteSpace(text) ||
+            !double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed) ||
+            double.IsNaN(parsed))
+        {
+            return 0;
+        }
+
+        var truncated = TruncateToFractionDigits(parsed, fractionDigits: 0);
+        return (long)Math.Clamp(truncated, Math.Max(0, box.Minimum), box.Maximum);
+    }
+
+    /// <summary>
+    /// Commit-time (tier 1) clamp+truncation for the four Advanced interval NumberBoxes - fires when
+    /// one of them actually commits (blur/Enter/programmatic Value set), unlike
+    /// AdvancedIntervalInputBox_TextChanged above which fires live on every keystroke but never touches
+    /// these boxes' own Value/Text. Clamps sender.Value to its own Minimum/Maximum and truncates
+    /// (floors, never rounds) to a whole number, writing back only if that differs from the current
+    /// value. Confirmed empirically (not assumed) that NumberBox does NOT auto-clamp typed/committed
+    /// text to Minimum/Maximum on its own - typing e.g. "2000000" into HoursBox (Maximum 1666665) and
+    /// committing left .Value at 2000000 unless this handler clamps it explicitly; Minimum/Maximum only
+    /// constrain the (hidden, here) spin buttons/arrow keys, not committed typed text. Also confirmed
+    /// setting sender.Value from inside this very handler does not cause NumberBox to raise a second
+    /// ValueChanged for it (no reentrancy at all, so the differs-check here is just to skip a harmless
+    /// no-op write, not to guard against recursion). Skips entirely while
+    /// _isSyncingAdvancedIntervalFields is set (Basic -> Advanced population already writes
+    /// pre-clamped, pre-truncated whole numbers - see PopulateAdvancedIntervalFieldsFromBasic).
+    /// </summary>
+    private void AdvancedIntervalBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_isSyncingAdvancedIntervalFields)
         {
             return;
         }
 
-        // Cosmetic/display setting, not automation configuration - does not reset a just-finished
-        // run's "Stopped after N clicks/spins" status. If a run is currently in progress and
-        // displaying (or would display) the counter, refresh the button text immediately rather than
-        // waiting for the next action/hover event to pick up the new setting.
-        UpdatePowerButtonRunningDisplay();
-        ConfigService.Update(c => c.ShowActionCounter = ShowActionCounterToggle.IsOn);
+        if (double.IsNaN(sender.Value))
+        {
+            // Belt-and-braces alongside AdvancedIntervalInputBox_TextChanged's live coercion: NaN means
+            // this box committed (blur/Enter) while genuinely empty, which the never-blank rule (see
+            // HookBlankCoercion's doc comment) says should land on 0, not stay blank.
+            sender.Value = 0;
+            return;
+        }
+
+        var clamped = Math.Clamp(sender.Value, sender.Minimum, sender.Maximum);
+        var truncated = TruncateToFractionDigits(clamped, fractionDigits: 0);
+        if (truncated != sender.Value)
+        {
+            sender.Value = truncated;
+        }
     }
 
+    /// <summary>
+    /// Commit-time (tier 1) clamp+truncation for MinutesBox/SecondsBox, plus the existing config
+    /// persistence. MinutesBox truncates (floors) to a whole number; SecondsBox truncates beyond 3
+    /// decimal places - see TruncateToFractionDigits. Also clamps sender.Value to its own
+    /// Minimum/Maximum first: confirmed empirically (not assumed) that NumberBox does NOT auto-clamp
+    /// typed/committed text on its own - typing e.g. "99999960" into MinutesBox (Maximum 99999959) and
+    /// committing left .Value at 99999960 unless this handler clamps it explicitly; Minimum/Maximum
+    /// only constrain the spin buttons/arrow keys, not committed typed text.
+    ///
+    /// Also confirmed empirically: setting sender.Value from inside this very handler does NOT cause
+    /// NumberBox to raise a second ValueChanged for it - the Value/Text update happens synchronously
+    /// and silently, with no reentrancy at all. So there's no infinite-recursion risk to guard against
+    /// here, but it also means persistence can't rely on "a recursive call with the already-corrected
+    /// value handles it" - this method has exactly one pass per commit, so it must compute
+    /// minutes/seconds AFTER applying the clamp+truncation write, in the same pass, or it would persist
+    /// the pre-correction value.
+    /// </summary>
     private void IntervalBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
     {
         if (_isInitializing)
         {
             return;
+        }
+
+        if (double.IsNaN(sender.Value))
+        {
+            // Belt-and-braces alongside HookBlankCoercion's live coercion: NaN means this box committed
+            // (blur/Enter) while genuinely empty, which the never-blank rule says should land on 0, not
+            // stay blank.
+            sender.Value = 0;
+        }
+        else
+        {
+            var fractionDigits = ReferenceEquals(sender, SecondsBox) ? 3 : 0;
+            var clamped = Math.Clamp(sender.Value, sender.Minimum, sender.Maximum);
+            var truncated = TruncateToFractionDigits(clamped, fractionDigits);
+            if (truncated != sender.Value)
+            {
+                sender.Value = truncated;
+            }
         }
 
         var minutes = double.IsNaN(MinutesBox.Value) ? 0 : MinutesBox.Value;
@@ -1393,6 +2349,15 @@ public sealed partial class MainWindow : Window
         StopDatePicker.IsEnabled = true;
     }
 
+    /// <summary>
+    /// Also clamps sender.Value to [Minimum, Maximum] explicitly on commit - confirmed empirically
+    /// elsewhere in this file (see IntervalBox_ValueChanged's own doc comment) that NumberBox does NOT
+    /// actually enforce this for typed/committed text on its own, only for spin-button/arrow-key
+    /// increments. The character filter (see HookIntervalCharacterFilter) already keeps typed text from
+    /// ever exceeding Maximum (99999999 is exactly the largest 8-digit number, and MaxLength caps typed
+    /// text at 8 digits), but Minimum=1 has no equivalent typed-side guard - typing a bare "0" is a
+    /// valid single digit that would otherwise stick as committed as-is.
+    /// </summary>
     private void AutoStopCountBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
     {
         if (double.IsNaN(args.NewValue))
@@ -1400,7 +2365,13 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        _stagedAutoStopCount = (int)args.NewValue;
+        var clamped = Math.Clamp(args.NewValue, sender.Minimum, sender.Maximum);
+        if (clamped != sender.Value)
+        {
+            sender.Value = clamped;
+        }
+
+        _stagedAutoStopCount = (int)clamped;
     }
 
     private void StopDatePicker_DateChanged(object sender, DatePickerValueChangedEventArgs args)
@@ -1426,7 +2397,7 @@ public sealed partial class MainWindow : Window
     /// <summary>
     /// Refreshes AutoStopButtonLabel.Text and AutoStopIcon.Symbol to reflect whichever Auto Stop mode
     /// is currently committed (_autoStopMode) - the "Configure" placeholder if never configured,
-    /// the same "yyyy-MM-dd  HH:mm" summary as before for DateTime mode (Calendar icon), or "After N
+    /// FormatAutoStopDateTime's relative-day summary for DateTime mode (Calendar icon), or "After N
     /// click(s)/spin(s)" - reusing FormatActionCount, the same helper the running power-button counter
     /// uses, so the wording matches exactly - for Count mode (Refresh icon).
     /// </summary>
@@ -1437,16 +2408,48 @@ public sealed partial class MainWindow : Window
             case AutoStopMode.Count:
                 var mode = _isSpinModeSelected ? AutomationMode.Spin : AutomationMode.Click;
                 AutoStopButtonLabel.Text = $"After {FormatActionCount(_autoStopCount, mode)}";
-                AutoStopIcon.Glyph = "\uE72C"; //Refresh
+                AutoStopIcon.Glyph = "\uEF3B"; //Replay
                 break;
             case AutoStopMode.DateTime when _stopDateTime.HasValue:
-                AutoStopButtonLabel.Text = _stopDateTime.Value.ToString("yyyy-MM-dd  HH:mm");
-                AutoStopIcon.Glyph = "\uE787"; //Calendar
+                AutoStopButtonLabel.Text = FormatAutoStopDateTime(_stopDateTime.Value);
+                AutoStopIcon.Glyph = "\uEC92"; //DateTime
                 break;
             default:
                 AutoStopButtonLabel.Text = "Date & time or counter";
-                AutoStopIcon.Glyph = "\uE70F"; //Edit
+                AutoStopIcon.Glyph = "\uE93A"; //MiniExpand
                 break;
         }
+    }
+
+    /// <summary>
+    /// "Yesterday  HH:mm"/"Today  HH:mm"/"Tomorrow  HH:mm" when value's date is within a day of today,
+    /// falling back to the previous "yyyy-MM-dd  HH:mm" absolute format otherwise - kept correct across
+    /// a day boundary by ScheduleNextMidnightRefresh re-calling UpdateAutoStopButtonLabel at midnight,
+    /// since "today"/"tomorrow" is only ever true relative to whenever this happens to be evaluated.
+    /// </summary>
+    private static string FormatAutoStopDateTime(DateTime value)
+    {
+        var dayLabel = (value.Date - DateTime.Today).Days switch
+        {
+            -1 => "Yesterday",
+            0 => "Today",
+            1 => "Tomorrow",
+            _ => value.ToString("yyyy-MM-dd")
+        };
+        return $"{dayLabel}  {value:HH:mm}";
+    }
+
+    /// <summary>
+    /// (Re)schedules _autoStopLabelMidnightTimer to fire once at the next local midnight - see that
+    /// field's own comment for why. Recomputes the exact interval fresh every time (rather than
+    /// assuming a fixed 24h), so it stays correct across DST transitions. Runs unconditionally
+    /// regardless of _autoStopMode - UpdateAutoStopButtonLabel's own switch already no-ops correctly
+    /// for Count/None, so gating this on DateTime mode would only add complexity for no real benefit.
+    /// </summary>
+    private void ScheduleNextMidnightRefresh()
+    {
+        var now = DateTime.Now;
+        _autoStopLabelMidnightTimer.Interval = now.Date.AddDays(1) - now;
+        _autoStopLabelMidnightTimer.Start();
     }
 }

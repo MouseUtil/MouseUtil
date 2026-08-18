@@ -25,10 +25,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
 
-    <!-- Kept in sync with installer\MouseUtil.iss's MyAppVersion - shown in the Settings flyout
-         header (see MainWindow.xaml's SettingsFlyout) via Package.Current-less reflection on the
-         running assembly, since this app is unpackaged and has no Package.appxmanifest. -->
-    <Version>1.2.2</Version>
+    <!-- Kept in sync with installer\MouseUtil.iss's MyAppVersion - shown in the Settings overlay
+         header (see MainWindow.xaml's SettingsVersionText) via Package.Current-less reflection on
+         the running assembly, since this app is unpackaged and has no Package.appxmanifest. -->
+    <Version>1.3.0</Version>
 
     <Authors>MouseUtil</Authors>
     <Company>MouseUtil</Company>
@@ -37,6 +37,27 @@
   <PropertyGroup>
     <DebugType>embedded</DebugType>
     <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <!-- The SDK auto-detects the .git folder and sets SourceRevisionId to the full 40-character commit
+       SHA, then appends it to AssemblyInformationalVersion (what UpdateService.GetCurrentVersionString/
+       ProductVersion reads) as "+<SourceRevisionId>" - shortened here to git's own conventional 7-character short-SHA
+       length for Debug builds, so Settings shows e.g. "1.3.0+7b2b7ba" instead of the full hash. Must
+       run after InitializeSourceControlInformation (the SDK target that actually sets SourceRevisionId
+       from git) - overriding it any earlier would just get overwritten by that target's own default. -->
+  <Target Name="ShortenSourceRevisionId" AfterTargets="InitializeSourceControlInformation" Condition="'$(Configuration)'=='Debug'">
+    <PropertyGroup>
+      <SourceRevisionId>$(SourceRevisionId.Substring(0, 7))</SourceRevisionId>
+    </PropertyGroup>
+  </Target>
+
+  <!-- Release builds show a plain version number ("1.3.0"), with no commit suffix at all - unlike
+       Debug builds (see ShortenSourceRevisionId above), which keep the short SHA since knowing exactly
+       which commit a dev build came from is useful there. This disables the SDK's append step
+       entirely for Release, rather than shortening SourceRevisionId to an empty string, which would
+       otherwise leave a bare trailing "+" on the version. -->
+  <PropertyGroup Condition="'$(Configuration)'=='Release'">
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
 
   <ItemGroup>

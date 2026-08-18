@@ -1,0 +1,461 @@
+<UserControl
+    x:Class="MouseUtil.Controls.SettingsPanel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:MouseUtil.Controls">
+
+    <UserControl.Resources>
+        <!-- HotkeyCaptionTextBlock's style: a Normal/Disabled VisualState transition (see
+             DimmableLabel) instead of a code-behind Brush snapshot, so it stays correctly themed even
+             while disabled (SetInputsEnabled disables HotkeyButton while automation is running). -->
+        <Style x:Key="HotkeyCaptionLabelStyle" TargetType="controls:DimmableLabel">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="controls:DimmableLabel">
+                        <TextBlock
+                            x:Name="CaptionPresenter"
+                            Text="Start/Stop Hotkey"
+                            Foreground="{ThemeResource TextFillColorPrimaryBrush}">
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualState x:Name="Normal" />
+                                    <VisualState x:Name="Disabled">
+                                        <VisualState.Setters>
+                                            <Setter Target="CaptionPresenter.Foreground" Value="{ThemeResource TextFillColorDisabledBrush}" />
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                        </TextBlock>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ShowActionCounterCaption/PauseOnMovementCaption's style: same Normal/Disabled
+             VisualState mechanism as HotkeyCaptionLabelStyle above - these two toggle rows are
+             disabled (SetInputsEnabled) while automation is running, so their labels need the same
+             DimmableLabel treatment. The other toggle rows' labels stay plain TextBlocks - none of
+             them are ever disabled while running. -->
+        <Style x:Key="ShowActionCounterCaptionLabelStyle" TargetType="controls:DimmableLabel">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="controls:DimmableLabel">
+                        <TextBlock
+                            x:Name="CaptionPresenter"
+                            Text="Show click/spin counter"
+                            TextWrapping="Wrap"
+                            Foreground="{ThemeResource TextFillColorPrimaryBrush}">
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualState x:Name="Normal" />
+                                    <VisualState x:Name="Disabled">
+                                        <VisualState.Setters>
+                                            <Setter Target="CaptionPresenter.Foreground" Value="{ThemeResource TextFillColorDisabledBrush}" />
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                        </TextBlock>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ShowAdvancedIntervalDisplayCaption's style: same Normal/Disabled VisualState mechanism as
+             HotkeyCaptionLabelStyle/ShowActionCounterCaptionLabelStyle above. This row is disabled
+             while automation is running (see SetInputsEnabled) because, unlike a pure display
+             preference, this toggle directly drives which of MainWindow's BasicIntervalRow/
+             AdvancedIntervalRow is active (see MainWindow.UpdateAdvancedIntervalDisplayMode) - those
+             fields are locked while running for exactly the same reason, so this toggle has to be too,
+             or a user could still change the active interval configuration mid-run through this row. -->
+        <Style x:Key="ShowAdvancedIntervalDisplayCaptionLabelStyle" TargetType="controls:DimmableLabel">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="controls:DimmableLabel">
+                        <TextBlock
+                            x:Name="CaptionPresenter"
+                            Text="Display advanced interval"
+                            TextWrapping="Wrap"
+                            Foreground="{ThemeResource TextFillColorPrimaryBrush}">
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualState x:Name="Normal" />
+                                    <VisualState x:Name="Disabled">
+                                        <VisualState.Setters>
+                                            <Setter Target="CaptionPresenter.Foreground" Value="{ThemeResource TextFillColorDisabledBrush}" />
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                        </TextBlock>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="PauseOnMovementCaptionLabelStyle" TargetType="controls:DimmableLabel">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="controls:DimmableLabel">
+                        <TextBlock
+                            x:Name="CaptionPresenter"
+                            Text="Pause spinning on movement"
+                            TextWrapping="Wrap"
+                            Foreground="{ThemeResource TextFillColorPrimaryBrush}">
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualState x:Name="Normal" />
+                                    <VisualState x:Name="Disabled">
+                                        <VisualState.Setters>
+                                            <Setter Target="CaptionPresenter.Foreground" Value="{ThemeResource TextFillColorDisabledBrush}" />
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                        </TextBlock>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Shared visual language for the three section headers below (Interface/General/Update) -
+             matches IntervalCaptionLabelStyle in MainWindow.xaml (the "INTERVAL" caption above the
+             minutes/seconds boxes), minus the DimmableLabel disable-while-running behavior, which
+             doesn't apply to these headers. -->
+        <Style x:Key="SectionHeaderTextBlockStyle" TargetType="TextBlock" BasedOn="{StaticResource CaptionTextBlockStyle}">
+            <Setter Property="Opacity" Value="0.6" />
+            <Setter Property="CharacterSpacing" Value="80" />
+        </Style>
+    </UserControl.Resources>
+
+    <!-- Hosted once inside MainWindow's SettingsOverlay (see SettingsPanel.xaml.cs and
+         MainWindow.xaml's SettingsHost) - a single instance, never duplicated. Rows are grouped
+         into three labeled sections (Interface/General/Update), all always visible. Each section is
+         wrapped in the same CardBorderStyle card (see App.xaml) used by MainWindow's Interval/
+         Auto-stop cards, with Spacing="16" on this outer StackPanel producing the same gap between
+         cards that MainWindow gets from each Border's own Margin="0,0,0,16" - that approach doesn't
+         apply here since these cards already share a StackPanel with Spacing. -->
+    <StackPanel Spacing="16">
+        <!-- Interface -->
+        <Border Style="{StaticResource CardBorderStyle}">
+            <StackPanel Padding="20" Spacing="12">
+                <TextBlock Text="INTERFACE" Style="{StaticResource SectionHeaderTextBlockStyle}" />
+                <StackPanel Spacing="6">
+                    <!-- Each item's Content is a StackPanel (icon + label). Tag stays a plain "Light"/
+                         "Dark"/"System" string on every item, which is all ThemeComboBox_SelectionChanged
+                         and LoadFromConfig actually read. -->
+                    <ComboBox
+                        x:Name="ThemeComboBox"
+                        HorizontalAlignment="Stretch"
+                        SelectionChanged="ThemeComboBox_SelectionChanged">
+                        <ComboBoxItem
+                            x:Name="ThemeSystemItem"
+                            Tag="System"
+                            AutomationProperties.AutomationId="ThemeSystemItem">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE7F4;" FontSize="16" />
+                                <TextBlock Text="Follow system" />
+                            </StackPanel>
+                        </ComboBoxItem>
+                        <ComboBoxItem
+                            x:Name="ThemeLightItem"
+                            Tag="Light"
+                            AutomationProperties.AutomationId="ThemeLightItem">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE706;" FontSize="16" />
+                                <TextBlock Text="Light" />
+                            </StackPanel>
+                        </ComboBoxItem>
+                        <ComboBoxItem
+                            x:Name="ThemeDarkItem"
+                            Tag="Dark"
+                            AutomationProperties.AutomationId="ThemeDarkItem">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE708;" FontSize="16" />
+                                <TextBlock Text="Dark" />
+                            </StackPanel>
+                        </ComboBoxItem>
+                    </ComboBox>
+
+                    <!-- Directly toggles whether Advanced interval display mode is active in
+                         MainWindow's Interval card (swapping BasicIntervalRow/AdvancedIntervalRow - see
+                         MainWindow.UpdateAdvancedIntervalDisplayMode, driven here via
+                         ShowAdvancedIntervalDisplayChanged), persisted as config.ShowAdvancedIntervalDisplay.
+                         This is the only way to reach that mode - there used to also be an
+                         AdvancedIntervalDisplayButton directly in the Interval card, but it was removed
+                         entirely in favor of controlling this from Settings only. Disabled while
+                         automation is running (see SetInputsEnabled below), same as
+                         ShowActionCounterToggle/PauseOnMovementToggle and for the same reason: the
+                         interval fields this toggle switches between are themselves locked while
+                         running, so a user can't be allowed to change which set is active mid-run either. -->
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <controls:DimmableLabel
+                            x:Name="ShowAdvancedIntervalDisplayCaption"
+                            Grid.Column="0"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource ShowAdvancedIntervalDisplayCaptionLabelStyle}" />
+                        <ToggleSwitch
+                            x:Name="ShowAdvancedIntervalDisplayToggle"
+                            Grid.Column="1"
+                            OnContent=""
+                            OffContent=""
+                            MinWidth="0"
+                            Width="44"
+                            Padding="0"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            Toggled="ShowAdvancedIntervalDisplayToggle_Toggled"
+                            AutomationProperties.AutomationId="ShowAdvancedIntervalDisplayToggle"
+                            AutomationProperties.Name="Display advanced interval" />
+                    </Grid>
+
+                    <!-- Controls whether PowerToggleButton shows a running click/spin count - see
+                         MainWindow.UpdatePowerButtonRunningDisplay, driven here via
+                         ShowActionCounterChanged. -->
+                    <Grid x:Name="ShowActionCounterRow" ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <controls:DimmableLabel
+                            x:Name="ShowActionCounterCaption"
+                            Grid.Column="0"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource ShowActionCounterCaptionLabelStyle}" />
+                        <ToggleSwitch
+                            x:Name="ShowActionCounterToggle"
+                            Grid.Column="1"
+                            OnContent=""
+                            OffContent=""
+                            MinWidth="0"
+                            Width="44"
+                            Padding="0"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            Toggled="ShowActionCounterToggle_Toggled"
+                            AutomationProperties.AutomationId="ShowActionCounterToggle"
+                            AutomationProperties.Name="Show click/spin counter" />
+                    </Grid>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- General -->
+        <Border Style="{StaticResource CardBorderStyle}">
+            <StackPanel Padding="20" Spacing="12">
+                <TextBlock Text="GENERAL" Style="{StaticResource SectionHeaderTextBlockStyle}" />
+
+                <!-- Start/Stop global hotkey (F6 by default) - recorded via HotkeyButton_Click
+                     (enters recording mode) / HotkeyButton_KeyDown (captures the next key +
+                     currently-held modifiers, or Escape to cancel). Actual RegisterHotKey calls go
+                     through TryRegisterHotkey, a delegate MainWindow supplies (its
+                     GlobalHotkeyService/WndProc subclass can't move into this UserControl) - this is
+                     purely the display + input surface plus the rollback-on-conflict logic. -->
+                <StackPanel x:Name="HotkeyRow" Spacing="8">
+                    <controls:DimmableLabel x:Name="HotkeyCaptionTextBlock" Style="{StaticResource HotkeyCaptionLabelStyle}" />
+                    <Button
+                        x:Name="HotkeyButton"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch"
+                        Click="HotkeyButton_Click"
+                        KeyDown="HotkeyButton_KeyDown"
+                        AutomationProperties.AutomationId="HotkeyButton"
+                        AutomationProperties.Name="Start/Stop hotkey">
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock
+                                x:Name="HotkeyButtonLabel"
+                                Grid.Column="0"
+                                HorizontalAlignment="Left"
+                                VerticalAlignment="Center" />
+                            <SymbolIcon
+                                Grid.Column="1"
+                                Symbol="Keyboard"
+                                VerticalAlignment="Center"
+                                AutomationProperties.AccessibilityView="Raw" />
+                        </Grid>
+                    </Button>
+                    <TextBlock
+                        x:Name="HotkeyErrorTextBlock"
+                        Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                        TextWrapping="Wrap"
+                        Visibility="Collapsed"
+                        AutomationProperties.AutomationId="HotkeyErrorTextBlock" />
+                </StackPanel>
+
+                <StackPanel Spacing="6">
+                    <!-- Closing behavior: when on, closing the main window (X button, Alt+F4, taskbar close)
+                         hides it to the system tray instead of exiting - see Services/TrayIconService and
+                         MainWindow.AppWindow_Closing. -->
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock
+                            Grid.Column="0"
+                            Text="Keep running in system tray"
+                            VerticalAlignment="Center"
+                            TextWrapping="Wrap" />
+                        <ToggleSwitch
+                            x:Name="CloseToTrayToggle"
+                            Grid.Column="1"
+                            OnContent=""
+                            OffContent=""
+                            MinWidth="0"
+                            Width="44"
+                            Padding="0"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            Toggled="CloseToTrayToggle_Toggled"
+                            AutomationProperties.AutomationId="CloseToTrayToggle"
+                            AutomationProperties.Name="Keep running in system tray" />
+                    </Grid>
+
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <controls:DimmableLabel
+                            x:Name="PauseOnMovementCaption"
+                            Grid.Column="0"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource PauseOnMovementCaptionLabelStyle}" />
+                        <ToggleSwitch
+                            x:Name="PauseOnMovementToggle"
+                            Grid.Column="1"
+                            OnContent=""
+                            OffContent=""
+                            MinWidth="0"
+                            Width="44"
+                            Padding="0"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            Toggled="PauseOnMovementToggle_Toggled"
+                            AutomationProperties.AutomationId="PauseOnMovementToggle"
+                            AutomationProperties.Name="Pause spinning on movement" />
+                    </Grid>
+
+                    <!-- Mirrors the running interval countdown as a progress bar on the app's taskbar icon
+                         (ITaskbarList3 - see Services/TaskbarProgressService), turning amber/yellow
+                         automatically while paused. Never disabled while running, so its label stays a plain
+                         TextBlock. -->
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock
+                            Grid.Column="0"
+                            Text="Show countdown progress bar on taskbar icon"
+                            VerticalAlignment="Center"
+                            TextWrapping="Wrap" />
+                        <ToggleSwitch
+                            x:Name="ShowTaskbarProgressToggle"
+                            Grid.Column="1"
+                            OnContent=""
+                            OffContent=""
+                            MinWidth="0"
+                            Width="44"
+                            Padding="0"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            Toggled="ShowTaskbarProgressToggle_Toggled"
+                            AutomationProperties.AutomationId="ShowTaskbarProgressToggle"
+                            AutomationProperties.Name="Show countdown progress bar on taskbar icon" />
+                    </Grid>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- Update -->
+        <Border Style="{StaticResource CardBorderStyle}">
+            <StackPanel Padding="20" Spacing="12">
+                <TextBlock Text="UPDATE" Style="{StaticResource SectionHeaderTextBlockStyle}" />
+
+                <!-- Manual update check/install - always starts idle here regardless of what the toggle
+                     below's launch-time auto-check found (see MainWindow.InitializeAutoUpdateCheck); this
+                     button's own state is deliberately independent of that, even though both share the
+                     same UpdateService/HttpClient instance (see UpdateChecker). First click checks GitHub
+                     Releases and (if newer) relabels the button to "Update to vX.Y.Z"; the second click on
+                     that relabeled button actually downloads + launches the installer, then asks
+                     MainWindow to close (via CloseAppRequested) so the installer can overwrite files this
+                     process would otherwise still hold open. -->
+                <Button
+                    x:Name="UpdateButton"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Stretch"
+                    Click="UpdateButton_Click"
+                    AutomationProperties.AutomationId="UpdateButton"
+                    AutomationProperties.Name="Check for updates">
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock
+                            x:Name="UpdateButtonLabel"
+                            Grid.Column="0"
+                            Text="Check for updates"
+                            TextWrapping="Wrap"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Center" />
+                        <FontIcon
+                            x:Name="UpdateButtonIcon"
+                            Grid.Column="1"
+                            FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                            Glyph="&#xE72C;"
+                            VerticalAlignment="Center"
+                            AutomationProperties.AccessibilityView="Raw" />
+                    </Grid>
+                </Button>
+
+                <!-- Default OFF (see AppConfig.AutoCheckForUpdates). When on, MainWindow silently checks
+                     for an update once at launch and, if found, shows its own accent-colored download
+                     icon next to SettingsButton - this toggle has no effect on UpdateButton above, which
+                     always starts idle either way. Purely read at next launch (see
+                     MainWindow.InitializeAutoUpdateCheck) - toggling this mid-session doesn't trigger an
+                     immediate check.
+
+                     Margin="0,-6,0,0" pulls this row closer to UpdateButton above, tightening their gap
+                     from the outer StackPanel's Spacing="12" down to 6 without touching that Spacing itself,
+                     which is local to this card's StackPanel and would also shrink the gap above UpdateButton
+                     (between it and the "UPDATE" header) if changed directly - untouched, that gap stays
+                     exactly as it is. -->
+                <Grid Margin="0,-6,0,0" ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock
+                        Grid.Column="0"
+                        Text="Check for updates on launch"
+                        VerticalAlignment="Center"
+                        TextWrapping="Wrap" />
+                    <ToggleSwitch
+                        x:Name="AutoCheckForUpdatesToggle"
+                        Grid.Column="1"
+                        OnContent=""
+                        OffContent=""
+                        MinWidth="0"
+                        Width="44"
+                        Padding="0"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center"
+                        Toggled="AutoCheckForUpdatesToggle_Toggled"
+                        AutomationProperties.AutomationId="AutoCheckForUpdatesToggle"
+                        AutomationProperties.Name="Check for updates on launch" />
+                </Grid>
+            </StackPanel>
+        </Border>
+    </StackPanel>
+</UserControl>
