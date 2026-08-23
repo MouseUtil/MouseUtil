@@ -9,7 +9,7 @@ downloads, or AFK sessions.
 Head over to the [Releases](https://github.com/MouseUtil/MouseUtil/releases) page, and grab the
 MouseUtilSetup `.zip` or `.exe`.
 
-![MouseUtil](assets/hero.gif)
+![MouseUtil](Assets/hero.gif)
 
 ### Modes
 
