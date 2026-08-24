@@ -2,6 +2,22 @@
 
 All notable changes to MouseUtil are documented in this file.
 
+## [1.3.1]
+
+### Changed
+
+- **Auto Click and Spin Mode's selected border** - reduced from 2px to 1.5px, reading better and
+  matching the icons' thickness on all display scales. `SelectedModeBoxBorder`'s `Thickness` in
+  `MainWindow.xaml.cs` changed from `new(2)` to `new(1.5)`; `ClickModeIcon`/`SpinModeIcon`'s
+  `Viewbox` in `MainWindow.xaml` was also moved from being `ClickModeBox`/`SpinModeBox`'s child to
+  being a sibling in the same Grid cell, so the box's `BorderThickness` can no longer affect the
+  icon's own layout.
+
+- **The randomize-interval toggle's outline is thinner while locked and enabled** (i.e. checked,
+  with automation running) - reduced from 1px to 0.5px so it reads as a subtler indicator rather
+  than a heavy border around the icon. `RandomizeIntervalButton`'s `BorderThickness` in
+  `MainWindow.xaml` changed from `1` to `0.5`.
+
 ## [1.3.0]
 
 ### Added

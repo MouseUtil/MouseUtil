@@ -176,7 +176,7 @@
                              on/off source of truth (synced into _isRandomizeIntervalEnabled from the
                              Checked/Unchecked handlers in code-behind) rather than a Click handler
                              flipping a bool and recoloring the icon as the only visible state. Background/
-                             BorderBrush stay Transparent with BorderThickness="1" (not 0) so the default
+                             BorderBrush stay Transparent with BorderThickness="0.5" (not 0) so the default
                              ControlTemplate's PointerOver state still has something to render into while
                              Unchecked, matching SettingsBackButton/ModeSwitchButton's own transparent-
                              chrome pattern elsewhere in this file.
@@ -197,7 +197,7 @@
                              white/black at low alpha, NOT a desaturated accent hue), so the resulting
                              stroke is already native and theme-correct with zero code-behind involvement,
                              the same gray tone that was previously used to fill the whole pill, now drawn
-                             as the 1px stroke (BorderThickness="1" above) instead. RandomizeIntervalIcon.Opacity
+                             as the thin stroke (BorderThickness="0.5" above) instead. RandomizeIntervalIcon.Opacity
                              is dimmed to 0.6 whenever locked, regardless of Checked state (see
                              UpdateRandomizeIntervalIndicator, which owns Opacity as well as Foreground)
                              so the icon reads as settled/locked rather than interactive - this button's
@@ -267,7 +267,7 @@
                             VerticalAlignment="Center"
                             RenderTransformOrigin="0.5,0.5"
                             Background="Transparent"
-                            BorderThickness="1"
+                            BorderThickness="0.5"
                             BorderBrush="Transparent"
                             Checked="RandomizeIntervalButton_CheckedChanged"
                             Unchecked="RandomizeIntervalButton_CheckedChanged"
@@ -653,13 +653,20 @@
                  its selected indicator.
 
                  Internally it renders as two 48x48 rounded boxes (ClickModeBox / SpinModeBox) placed
-                 2px apart (Grid.ColumnSpacing), each wrapping its icon in a Viewbox pinned to the same
-                 18x18 square so the ClickModeIcon FontIcon and the Sync SymbolIcon (both sized from
-                 FontSize) rasterize at the same pixel size. The boxes
+                 2px apart (Grid.ColumnSpacing), each paired with an icon Viewbox pinned to the same
+                 18x18/19x19 square so the ClickModeIcon FontIcon and the Sync SymbolIcon (both sized
+                 from FontSize) rasterize at the same pixel size. Each icon's Viewbox is a sibling of
+                 its box (same Grid cell/column), not the Border's child - a Border insets its child by
+                 its own BorderThickness (content shrinks to make room for the stroke), so a nested
+                 Viewbox would visibly nudge/resize by a fraction of a device pixel every time
+                 BorderThickness flips between 0 (unselected) and its selected value below, especially
+                 at non-integer UI scale factors where that fractional inset doesn't land on a whole
+                 device pixel. Keeping the icon as an independent sibling instead means BorderThickness
+                 changes only ever affect the border stroke, never the icon's own layout. The boxes
                  have no Background fill at all and no BorderThickness/BorderBrush set here in XAML -
                  both are driven entirely from code (UpdateModeIndicators): the unselected box gets
                  BorderThickness=0 (fully invisible, no border, no fill), while the selected box gets
-                 the accent-colored 2px BorderBrush outline as its sole selection indicator.
+                 the accent-colored 1.5px BorderBrush outline as its sole selection indicator.
 
                  The outer ModeSwitchButton is a plain Button with Background="Transparent" but
                  BorderThickness="1" (not 0) and BorderBrush="Transparent": this keeps it flush/flat at
@@ -782,29 +789,32 @@
                         <Border.RenderTransform>
                             <ScaleTransform x:Name="ClickModeScaleTransform" />
                         </Border.RenderTransform>
-                        <!-- 19x19, 1px bigger than SpinModeBox's Sync icon's 18x18 Viewbox below - the
-                             "\uE8B0" glyph reads visibly smaller than the Sync symbol at matching sizes,
-                             so this deliberately breaks the two icons' pixel-for-pixel size parity to
-                             compensate. Margin="1,0,-1,0" nudges this Viewbox 1px right within
-                             ClickModeBox's 48x48 box, without changing its own 19x19 size: an
-                             equal-and-opposite left/right margin shifts the centered position by
-                             (left-right)/2 while leaving the space available for centering unchanged
-                             (avoids also touching FontIcon's own RenderTransform, which already carries
-                             ClickModeIconRotateTransform). The "\uE8B0" glyph is mathematically centered
-                             in its own character cell, but its ink/silhouette reads as visually
-                             off-center to the eye - this corrects for that optical illusion, not an
-                             actual layout bug. -->
-                        <Viewbox Width="19" Height="19" Margin="1,0,-1,0">
-                            <FontIcon
-                                x:Name="ClickModeIcon"
-                                Glyph="&#xE8B0;"
-                                RenderTransformOrigin="0.5,0.5">
-                                <FontIcon.RenderTransform>
-                                    <RotateTransform x:Name="ClickModeIconRotateTransform" />
-                                </FontIcon.RenderTransform>
-                            </FontIcon>
-                        </Viewbox>
                     </Border>
+                    <!-- 19x19, 1px bigger than SpinModeBox's Sync icon's 18x18 Viewbox below - the
+                         "\uE8B0" glyph reads visibly smaller than the Sync symbol at matching sizes, so
+                         this deliberately breaks the two icons' pixel-for-pixel size parity to
+                         compensate. Margin="1,0,-1,0" nudges this Viewbox 1px right within
+                         ClickModeBox's 48x48 box, without changing its own 19x19 size: an
+                         equal-and-opposite left/right margin shifts the centered position by
+                         (left-right)/2 while leaving the space available for centering unchanged
+                         (avoids also touching FontIcon's own RenderTransform, which already carries
+                         ClickModeIconRotateTransform). The "\uE8B0" glyph is mathematically centered in
+                         its own character cell, but its ink/silhouette reads as visually off-center to
+                         the eye - this corrects for that optical illusion, not an actual layout bug.
+                         IsHitTestVisible="False" and being a sibling of ClickModeBox (not its child -
+                         see the comment above this Grid's Border children for why) means this Viewbox
+                         sits visually on top of the box in the same Grid.Column but never intercepts
+                         pointer input or gets its own layout affected by the box's BorderThickness. -->
+                    <Viewbox Grid.Column="0" Width="19" Height="19" Margin="1,0,-1,0" IsHitTestVisible="False">
+                        <FontIcon
+                            x:Name="ClickModeIcon"
+                            Glyph="&#xE8B0;"
+                            RenderTransformOrigin="0.5,0.5">
+                            <FontIcon.RenderTransform>
+                                <RotateTransform x:Name="ClickModeIconRotateTransform" />
+                            </FontIcon.RenderTransform>
+                        </FontIcon>
+                    </Viewbox>
                     <Border
                         x:Name="SpinModeBox"
                         Grid.Column="1"
@@ -815,17 +825,17 @@
                         <Border.RenderTransform>
                             <ScaleTransform x:Name="SpinModeScaleTransform" />
                         </Border.RenderTransform>
-                        <Viewbox Width="18" Height="18">
-                            <SymbolIcon
-                                x:Name="SpinModeIcon"
-                                Symbol="Sync"
-                                RenderTransformOrigin="0.5,0.5">
-                                <SymbolIcon.RenderTransform>
-                                    <RotateTransform x:Name="SpinModeIconRotateTransform" />
-                                </SymbolIcon.RenderTransform>
-                            </SymbolIcon>
-                        </Viewbox>
                     </Border>
+                    <Viewbox Grid.Column="1" Width="18" Height="18" IsHitTestVisible="False">
+                        <SymbolIcon
+                            x:Name="SpinModeIcon"
+                            Symbol="Sync"
+                            RenderTransformOrigin="0.5,0.5">
+                            <SymbolIcon.RenderTransform>
+                                <RotateTransform x:Name="SpinModeIconRotateTransform" />
+                            </SymbolIcon.RenderTransform>
+                        </SymbolIcon>
+                    </Viewbox>
                 </Grid>
             </Button>
 

@@ -1494,7 +1494,7 @@ public sealed partial class MainWindow : Window
     }
 
     private static readonly Thickness NoModeBoxBorder = new(0);
-    private static readonly Thickness SelectedModeBoxBorder = new(2);
+    private static readonly Thickness SelectedModeBoxBorder = new(1.5);
     private const double SelectedModeBoxBackgroundOpacity = 0.20;
     private const double DisabledModeBoxBorderOpacity = 0.5;
     private const double UnselectedModeIconRunningOpacity = 0.5;
