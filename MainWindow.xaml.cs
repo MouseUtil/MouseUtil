@@ -290,6 +290,13 @@ public sealed partial class MainWindow : Window
             UpdateRandomizeIntervalIndicator();
         };
 
+        // AutoStopCountBox's InputBox part can be left with a stuck, invisible glyph layout the first
+        // time this dialog is ever shown - see RefreshStaleNumberBoxTextLayout's own doc comment. Opened
+        // fires only once the dialog is actually composed/shown (unlike XamlRoot assignment, which
+        // happens earlier, before that's true - see AutoStopButton_Click's own comment on this), so this
+        // is the right place to fix it.
+        AutoStopDialog.Opened += (_, _) => RefreshStaleNumberBoxTextLayout(AutoStopCountBox);
+
         // Sets RandomizeIntervalIcon's initial AutomationProperties.Name/Foreground declaratively
         // from _isRandomizeIntervalEnabled's actual (always-false-on-launch) value, rather than
         // relying on the XAML defaults happening to already match it.
@@ -974,11 +981,52 @@ public sealed partial class MainWindow : Window
         DispatcherQueue.TryEnqueue(UpdateTitleBarButtonColors);
     }
 
+    /// <summary>
+    /// Forces a genuine glyph-layout repaint of one NumberBox known to render invisible/stale text the
+    /// first time it's actually shown: AutoStopCountBox (inside AutoStopDialog, a ContentDialog with no
+    /// XamlRoot until first shown) and the four Advanced interval fields (inside AdvancedIntervalRow,
+    /// Visibility="Collapsed" until the user enables it) - see this method's callers below.
+    ///
+    /// Root cause (confirmed empirically via direct property/pixel inspection - two earlier theories
+    /// here, "Collapsed subtrees are excluded from the theme-repaint walk" and "the inner TextBox's
+    /// {ThemeResource} Foreground goes stale," were both wrong: Foreground/Text/Value/Visibility/Opacity
+    /// all read back already-correct at the moment the glyph still failed to render, confirmed via a
+    /// property-changed-callback probe and direct pixel sampling of the rendered box, both before and
+    /// after this method used to also copy a brush in here needlessly): the inner "InputBox" TextBox's
+    /// text layout was computed for the FIRST time while it still had zero available width - both boxes
+    /// get box.ApplyTemplate() forced eagerly in the constructor (InitializeAdvancedIntervalLiveSync/
+    /// SetInputBoxMaxLength) while AdvancedIntervalRow is still Collapsed / AutoStopDialog has no
+    /// XamlRoot, i.e. before either has ever been through a real Measure/Arrange pass. Neither a
+    /// Visibility toggle nor fully detaching/reattaching the control from its parent's Children forces
+    /// that cached zero-width layout to recompute; only an actual Text content change does - and even
+    /// PopulateAdvancedIntervalFieldsFromBasic's own Value write (which does change Text) doesn't help,
+    /// because it runs synchronously, in the same dispatch as the Visibility flip that reveals the row,
+    /// before that row's own real Arrange pass (with real width) has actually happened yet.
+    ///
+    /// Fix: round-trip Text after the real Arrange pass has already happened - see this method's two
+    /// callers (AdvancedIntervalRow: the deferred call in UpdateAdvancedIntervalDisplayMode, which runs
+    /// on the next dispatch after the Visibility flip's own layout; AutoStopDialog: its Opened event,
+    /// which fires only once the dialog is actually composed and shown).
+    /// </summary>
+    private static void RefreshStaleNumberBoxTextLayout(NumberBox box)
+    {
+        if (FindInputBox(box) is not { } inputBox)
+        {
+            return;
+        }
+
+        var currentText = inputBox.Text;
+        inputBox.Text = currentText + " ";
+        inputBox.Text = currentText;
+    }
+
     private void SetInputsEnabled(bool enabled)
     {
         ModeSwitchButton.IsEnabled = enabled;
         MinutesBox.IsEnabled = enabled;
         SecondsBox.IsEnabled = enabled;
+        UpdateCompactSpinButtonIndicatorOpacity(MinutesBox, enabled);
+        UpdateCompactSpinButtonIndicatorOpacity(SecondsBox, enabled);
         AutoStopCheckBox.IsEnabled = enabled;
         SetStopControlsEnabled(enabled && AutoStopCheckBox.IsChecked == true);
 
@@ -1198,6 +1246,46 @@ public sealed partial class MainWindow : Window
         }
 
         return null;
+    }
+
+    // "PopupIndicator" is the small combined up/down chevron glyph NumberBox's own ControlTemplate
+    // shows at rest in SpinButtonPlacementMode="Compact" (see MinutesBox/SecondsBox). It's a plain
+    // TextBlock with a hardcoded ThemeResource Foreground - the template's own Disabled VisualState
+    // only dims HeaderContentPresenter (the "Minutes"/"Seconds" label), never this glyph, so it stays
+    // at full opacity even while the NumberBox is IsEnabled=false. Found and dimmed manually from
+    // SetInputsEnabled below for that reason.
+    private static TextBlock? FindPopupIndicator(DependencyObject root)
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is TextBlock { Name: "PopupIndicator" } popupIndicator)
+            {
+                return popupIndicator;
+            }
+
+            if (FindPopupIndicator(child) is { } found)
+            {
+                return found;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Dims MinutesBox/SecondsBox's own Compact spin-button chevron (see FindPopupIndicator above) to
+    /// match their IsEnabled state - 0.3 rather than UpdateRandomizeIntervalIndicator's own 0.6
+    /// locked-opacity value, since this glyph reads as more prominent than that icon at rest and needs
+    /// to dim further to look equivalently disabled next to the header/value text beside it.
+    /// </summary>
+    private static void UpdateCompactSpinButtonIndicatorOpacity(NumberBox box, bool enabled)
+    {
+        if (FindPopupIndicator(box) is { } popupIndicator)
+        {
+            popupIndicator.Opacity = enabled ? 1 : 0.3;
+        }
     }
 
     private void PowerToggleButton_Unchecked(object sender, RoutedEventArgs e)
@@ -1683,6 +1771,20 @@ public sealed partial class MainWindow : Window
         if (_isAdvancedIntervalDisplayEnabled)
         {
             PopulateAdvancedIntervalFieldsFromBasic();
+
+            // Deferred one dispatcher tick: AdvancedIntervalRow's four NumberBoxes haven't gone through
+            // their own first real Arrange pass yet at the point Visibility flips above (that pass
+            // happens as part of the layout this triggers, not synchronously here) - each box's glyph
+            // layout can be left stuck invisible if it's refreshed before that pass instead of after
+            // it. See RefreshStaleNumberBoxTextLayout's own doc comment, and AutoStopDialog.Opened's
+            // subscription (constructor) for the equivalent fix on that dialog.
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                RefreshStaleNumberBoxTextLayout(HoursBox);
+                RefreshStaleNumberBoxTextLayout(AdvancedMinutesBox);
+                RefreshStaleNumberBoxTextLayout(AdvancedSecondsBox);
+                RefreshStaleNumberBoxTextLayout(MillisecondsBox);
+            });
         }
     }
 
@@ -2315,6 +2417,11 @@ public sealed partial class MainWindow : Window
         }
 
         AutoStopDialog.XamlRoot = Content.XamlRoot;
+
+        // NOT calling RefreshStaleNumberBoxTextLayout() here, before ShowAsync: the dialog isn't
+        // actually composed/shown yet at this point, so AutoStopCountBox's InputBox hasn't gone through
+        // its own first real Arrange pass - see AutoStopDialog.Opened's subscription (constructor) and
+        // RefreshStaleNumberBoxTextLayout's own doc comment for why the fix has to run after that pass.
         var result = await AutoStopDialog.ShowAsync();
 
         if (result == ContentDialogResult.Primary)

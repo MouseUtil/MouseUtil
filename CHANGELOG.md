@@ -2,6 +2,37 @@
 
 All notable changes to MouseUtil are documented in this file.
 
+## [1.3.2]
+
+### Fixed
+
+- **The "clicks/spins" count field in the Automatically Stop dialog, and the advanced interval
+  fields Hours/Minutes/Seconds/Milliseconds, could render wrong/stuck text** the first time they
+  were actually shown, if the Windows *system* theme changed while they were still off-screen -
+  i.e. while the Automatically Stop dialog had never been opened yet, or while the advanced
+  interval fields were still collapsed. Depending on which way the system theme switched, this
+  showed up either as fully invisible text (white-on-white after a dark→light switch) or as
+  low-contrast text (black-on-gray after a light→dark switch). Switching the app's own in-app
+  Theme setting was never affected; only a system-level theme change was. Root cause: both fields
+  get built in the background before they're ever actually shown on screen, while they still have
+  no real size - so the text inside them gets laid out as if there's zero space for it, and simply
+  showing the field later doesn't make it redo that layout with its real, correct size. This had
+  nothing to do with color, which is why nothing about the theme itself was ever actually wrong -
+  it's why just re-applying the theme colors never fixed it. `MainWindow.xaml.cs` now has a new
+  `RefreshStaleNumberBoxTextLayout` helper that forces a field's text to redo its layout, called
+  the moment each field is actually shown for the first time: right after `AutoStopDialog.Opened`
+  fires (for `AutoStopCountBox`), and right after `AdvancedIntervalRow` is switched on in
+  `UpdateAdvancedIntervalDisplayMode` (for `HoursBox`/`AdvancedMinutesBox`/`AdvancedSecondsBox`/
+  `MillisecondsBox`).
+
+- **The Minutes/Seconds fields' up/down chevron stayed at full opacity while automation was
+  running**, even though everything else around it (the "Minutes"/"Seconds" label and the typed
+  value) visibly dimmed to show the fields were locked. Root cause: `NumberBox`'s own
+  `SpinButtonPlacementMode="Compact"` template shows that chevron via a plain `TextBlock`
+  ("PopupIndicator") that the stock WinUI control template never wires to the Disabled visual
+  state. `MainWindow.xaml.cs` now finds that template part directly and dims it to 0.3 opacity
+  whenever `MinutesBox`/`SecondsBox` are disabled.
+
 ## [1.3.1]
 
 ### Changed
