@@ -6,7 +6,8 @@ downloads, or AFK sessions.
 
 ### Download
 
-Head over to the [Releases](https://github.com/MouseUtil/MouseUtil/releases) page, and grab the
+MouseUtil ships as an MSIX package through the Microsoft Store. If you'd rather sideload it, head
+over to the [Releases](https://github.com/MouseUtil/MouseUtil/releases) page and grab the
 MouseUtilSetup `.zip` or `.exe`.
 
 ![MouseUtil](Assets/hero.gif)
@@ -14,22 +15,25 @@ MouseUtilSetup `.zip` or `.exe`.
 ### Modes
 
 - **Auto click** — clicks at wherever the cursor currently is, without moving it.
-- **Spin mode** — sweeps the cursor around a tiny circle and returns it to the exact starting
-  pixel, without clicking.
+- **Jiggle** — sweeps the cursor around a tiny circle and returns it to the exact starting pixel,
+  without clicking.
 
 ### Features and options
 
 - ⏱️ Configurable interval between actions, with an optional randomized range and an advanced
   Hours/Minutes/Seconds/Milliseconds view.
-- ✋ Pause on manual movement (Spin mode) — touching the mouse pauses the countdown instead of
-  fighting you for control.
-- 🛑 Auto-stop after a number of clicks/spins, or at a specific date and time.
+- ✋ Pause on manual movement — touching the mouse pauses the countdown instead of fighting you for
+  control. Can be turned on independently for Auto click and/or Jiggle.
+- 🛑 Auto-stop after a number of clicks/jiggles, or at a specific date and time.
 - ⌨️ Global hotkey to start/stop from anywhere (F6 by default).
-- 📊 Live countdown, action (click/spin) counter, and an optional taskbar progress overlay.
+- 📊 Live countdown or action counter right on the Start/Stop button, plus an optional taskbar
+  progress overlay.
 - 📥 System tray icon with live status and a context menu to start/stop/pause without opening the
   window — optionally close to tray instead of exiting.
-- 🎨 Fluent design with light/dark/system theming.
-- ⚙️ Settings persist across runs (`%USERPROFILE%\.mouse_utility_config.json`).
+- 🚀 Run on system startup, with an independent "App launch behavior" (preferred mode, start
+  automatically, randomize interval) applied on every launch.
+- 🎨 Fluent design with light/dark/system theming, and Windows 11 Settings-style controls.
+- ⚙️ Settings persist across runs (`%APPDATA%\MouseUtil\config.json`).
 
 ### Notes
 
