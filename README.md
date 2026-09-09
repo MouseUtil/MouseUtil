@@ -6,9 +6,9 @@ downloads, or AFK sessions.
 
 ### Download
 
-MouseUtil ships as an MSIX package through the Microsoft Store. If you'd rather sideload it, head
-over to the [Releases](https://github.com/MouseUtil/MouseUtil/releases) page and grab the
-MouseUtilSetup `.zip` or `.exe`.
+MouseUtil ships as an MSIX package through the Microsoft Store:
+
+https://apps.microsoft.com/detail/9NTDCVFVF0SQ
 
 ![MouseUtil](Assets/hero.gif)
 
