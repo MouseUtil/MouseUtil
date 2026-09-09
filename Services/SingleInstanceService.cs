@@ -20,18 +20,32 @@ internal static class SingleInstanceService
 {
     // Fixed, unique name so this Mutex can never collide with an unrelated app's - scoped to the
     // current user session (no "Global\" prefix), which is all a single-user desktop utility needs.
+    // Debug builds get their own distinct name/title (the "-Debug" suffix / "MouseUtil Debug" below) so a
+    // Debug build can run side by side with an installed Release build instead of being treated as a
+    // second instance of it - each build config only ever competes with another instance of itself.
+#if DEBUG
+    private const string MutexName = "MouseUtil-SingleInstance-3f1b7c2e-6c8b-4b96-9c10-8b2a6e9e9b54-Debug";
+    private const string ShowWindowMessageName = "MouseUtil-ShowInstance-3f1b7c2e-6c8b-4b96-9c10-8b2a6e9e9b54-Debug";
+#else
     private const string MutexName = "MouseUtil-SingleInstance-3f1b7c2e-6c8b-4b96-9c10-8b2a6e9e9b54";
-
     private const string ShowWindowMessageName = "MouseUtil-ShowInstance-3f1b7c2e-6c8b-4b96-9c10-8b2a6e9e9b54";
+#endif
 
     // Used by FindWindow to locate the first instance's top-level window from a second-instance
-    // process that otherwise has no handle to it at all. Window.Title (set once in MainWindow's
-    // constructor) is propagated straight through to the underlying HWND's window text, so searching
-    // by title alone - no class name, no other implementation-detail assumptions about how WinAppSDK
-    // registers its window class - is a simple, reliable way to find it. FindWindow enumerates
-    // top-level windows regardless of visibility, so this keeps working whether that window is
-    // currently normal, minimized, or hidden (e.g. a future tray-icon "hide instead of close" feature).
-    private const string MainWindowTitle = "MouseUtil";
+    // process that otherwise has no handle to it at all, and set as MainWindow's own Window.Title (see
+    // MainWindow's constructor) so the two always match - Window.Title is propagated straight through
+    // to the underlying HWND's window text, so searching by title alone - no class name, no other
+    // implementation-detail assumptions about how WinAppSDK registers its window class - is a simple,
+    // reliable way to find it. FindWindow enumerates top-level windows regardless of visibility, so
+    // this keeps working whether that window is currently normal, minimized, or hidden (e.g. a future
+    // tray-icon "hide instead of close" feature). The Debug-only "MouseUtil Debug" title also has a
+    // visible side benefit: it distinguishes a Debug build's window in the taskbar/Alt-Tab from a
+    // simultaneously-running Release build's.
+#if DEBUG
+    internal const string MainWindowTitle = "MouseUtil Debug";
+#else
+    internal const string MainWindowTitle = "MouseUtil";
+#endif
 
     private static Mutex? _mutex;
 

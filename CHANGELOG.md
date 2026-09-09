@@ -2,6 +2,101 @@
 
 All notable changes to MouseUtil are documented in this file.
 
+## [2.0.0] [WIP]
+
+This release is a near-total redesign of the app's UI, on top of a handful of behavioral changes.
+This entry describes how the app looks and behaves now, and calls out what differs from 1.3.2.
+
+### Renamed
+
+- **"Spin mode" is now called "Jiggle"**, everywhere it appears. This is a rename only - the mode's
+  actual behavior (sweep the cursor in a small circle back to its starting pixel) is unchanged.
+
+### Changed
+
+- **Main window redesigned.** The Auto click/Jiggle switch is now a `Segmented` control (Windows
+  Community Toolkit) at the very top of the window, each segment showing both an icon and a label,
+  replacing the old hand-built mode-switch box that used to sit at the bottom next to the Start/Stop
+  button. The title bar is simplified to just the app icon (DPI-aware) and "MouseUtil" - the old
+  "Auto click"/"Jiggle"/"Settings" subtitle is gone, since the mode selector now spells its own state
+  out directly. The Settings gear moved up next to the mode selector, icon-only and matched in size
+  to it. **Overall window height is down from 576 to 506 DIPs.**
+
+- **Settings rebuilt using Windows 11 Settings-style controls** (`SettingsCard`/ `SettingsExpander`
+  from the Community Toolkit), replacing the old hand-styled full-page card layout introduced in 1.3.0.
+  Settings is still a full-page overlay (not a flyout) organized into Display/Behavior/System sections,
+  but each row now looks and behaves like a native Windows Settings entry - including proper expanders
+  for grouped options like Theme, Interval display, and Stop button display.
+
+- **MSIX packaging, distributed through the Microsoft Store.** MouseUtil now ships as an MSIX
+  package instead of a plain installer/xcopy build. This is also what makes the new "Run on system
+  startup" setting below possible - the modern startup-task API it uses requires a packaged app.
+
+- **"Pause on movement" is no longer exclusive to Jiggle mode** - it can now be turned on
+  independently for Auto click and/or Jiggle mode in Settings' Behavior section, instead of always
+  applying to Jiggle mode only.
+
+- **Config file moved**
+  From `%USERPROFILE%\.mouse_utility_config.json` to `%APPDATA%\MouseUtil\config.json`.
+
+- **"Display advanced interval" is now an "Interval display" dropdown** ("Minutes and Seconds" /
+  "Hours, Minutes, Seconds, Milliseconds"), replacing the old on/off toggle - same underlying
+  behavior, just presented as an explicit choice.
+
+- **"Automatically stop" is now "Auto Stop", using a toggle switch instead of a checkbox**.
+
+- Smaller polish throughout: the scheduled date/time summary uses a middle-dot separator
+  ("Today · 14:30"), countdowns switch to a decimal display ("9.4s") slightly earlier (under 9.5s
+  instead of under 10s), and digits in countdowns/counters no longer visibly shift width as they
+  change (tabular numerals).
+
+- **Debug builds can now run alongside an installed Release build** instead of being treated as a
+  duplicate instance of it - each gets its own single-instance lock and window title ("MouseUtil
+  Debug" for Debug builds).
+
+### Added
+
+- **"Stop button display" setting** (Display section): a toggle plus a action timer / counter
+  dropdown controlling what the Start/Stop button shows while running. "Countdown" (the new default)
+  shows live time remaining directly on the button itself (e.g. "Clicking in 4s"); "Counter" shows
+  the previous behavior, a running click/jiggle count. Turning the toggle off returns to a plain
+  "Stop" button, moving the countdown/count text to the status bar instead.
+
+- **Alternate power button (`PowerToggleAlternateButton`):** covers two states Countdown mode's
+  plain Stop button can't show. A flat green "Starting..." during Click mode's 3-second startup
+  grace, and a translucent, accent-tinted "Paused" (then "Resuming in Xh Ym Zs" once available) during
+  pause-on-movement. Hovering the button during Paused reveals "Stop" underneath, same as the normal
+  countdown display; hovering during Starting doesn't, since that countdown is brief and is the whole
+  point of showing it. Text shrinks for very long durations.
+
+- **"Run on system startup" setting** (System section): a toggle that launches the app itself (not
+  automation) at Windows logon. Implemented via the `windows.startupTask` extension declared in
+  `Package.appxmanifest` and the `StartupTask` API (`Services/StartupTaskService.cs`) - not the
+  legacy approach older Win32 apps use (an HKCU `...\Run` registry value or a Startup-folder
+  shortcut). Because it goes through the same mechanism Windows itself uses, the toggle also shows
+  up under Windows Settings > Apps > Startup, and the OS can flip it independently of the app (the
+  setting row hides itself entirely if the app isn't running packaged/registered).
+
+- **"App launch behavior" settings** (Behavior section): three new options controlling what happens
+  on every app launch - "Preferred mode" (Last used / Auto click / Jiggle), "Start automatically"
+  (begin automation immediately), and "Enable 'Randomized interval'" (start with Randomize interval
+  already on). These fire on every launch regardless of how the app was launched, so they work as an
+  extension of "Run on system startup" (letting automation begin unattended right after logon) but
+  are just as usable on their own for a manual launch.
+
+### Removed
+
+- **The in-app update checker** (Settings' "Check for Updates" button, the "Check automatically on
+  launch" toggle, and the accent-colored update-available notification icon) - now that MouseUtil is
+  distributed through the Microsoft Store, the Store handles keeping it up to date instead.
+
+### Fixed
+
+- Toggle switches disabled while automation is running (e.g. Pause on movement, Auto Stop) kept
+  showing the old theme's color after switching Light/Dark, since a `ToggleSwitch`'s disabled-state
+  color only bakes in once and doesn't live-update with the theme. They now refresh correctly on
+  every theme change.
+
 ## [1.3.2]
 
 ### Fixed

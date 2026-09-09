@@ -9,15 +9,16 @@ namespace MouseUtil.Services;
 /// the "Close to system tray" feature (see MainWindow.AppWindow_Closing) and raises
 /// <see cref="ShowRequested"/>/<see cref="ExitRequested"/> for its left-click and context-menu
 /// "Show MouseUtil"/"Exit" actions, plus <see cref="StartRequested"/>/<see cref="StopRequested"/>/
-/// <see cref="TogglePauseOnMovementRequested"/> for the context menu's Start/Stop/pause-on-movement
+/// <see cref="TogglePauseOnMovementRequested"/> for the context menu's Start/Stop/"Pause on movement"
 /// items (see ShowContextMenu). Registers its callback message through <see cref="GlobalHotkeyService"/>'s
 /// existing WndProc subclass (see RegisterMessageHandler) rather than installing a second one, following
 /// the same pattern SingleInstanceService uses.
 ///
 /// Also swaps which icon is displayed to reflect the automation's running/paused state, and - while
 /// inactive - the system taskbar's current light/dark theme, via NIM_MODIFY (see UpdateState/
-/// UpdateSystemTheme). "Paused" here means MouseAutomationEngine.StatusKind.Paused (Spin mode's
-/// pause-on-movement countdown), unrelated to AutomationMode.Spin itself. The same NIM_MODIFY call also
+/// UpdateSystemTheme). "Paused" here means MouseAutomationEngine.StatusKind.Paused (the
+/// pause-on-movement countdown - no longer Jiggle-only, see SettingsPanel.IsPauseOnMovementActiveForMode),
+/// unrelated to AutomationMode.Jiggle itself. The same NIM_MODIFY call also
 /// keeps the tooltip (szTip) in sync with a live "MouseUtil: {mode} - {Active/Paused/Inactive}" string
 /// (see BuildTooltipText).
 /// </summary>
@@ -27,7 +28,7 @@ public sealed class TrayIconService : IDisposable
     private const int MenuCommandShow = 1;
     private const int MenuCommandExit = 2;
     private const int MenuCommandStartClick = 3;
-    private const int MenuCommandStartSpin = 4;
+    private const int MenuCommandStartJiggle = 4;
     private const int MenuCommandStop = 5;
     private const int MenuCommandTogglePauseOnMovement = 6;
 
@@ -58,13 +59,13 @@ public sealed class TrayIconService : IDisposable
     /// <summary>Raised when the user picks "Exit" from the tray icon's context menu.</summary>
     public event EventHandler? ExitRequested;
 
-    /// <summary>Raised when the user picks "Start Auto Click"/"Start Spin Mode" from the context menu (only reachable while inactive - see ShowContextMenu).</summary>
+    /// <summary>Raised when the user picks "Start Auto Click"/"Start Jiggle" from the context menu (only reachable while inactive - see ShowContextMenu).</summary>
     public event EventHandler<AutomationMode>? StartRequested;
 
     /// <summary>Raised when the user picks "Stop" from the context menu (only reachable while running - see ShowContextMenu).</summary>
     public event EventHandler? StopRequested;
 
-    /// <summary>Raised when the user picks "Pause spinning on movement" from the context menu (only reachable while inactive - see ShowContextMenu).</summary>
+    /// <summary>Raised when the user picks "Pause on movement" from the context menu (only reachable while inactive - see ShowContextMenu).</summary>
     public event EventHandler? TogglePauseOnMovementRequested;
 
     /// <summary>
@@ -146,12 +147,12 @@ public sealed class TrayIconService : IDisposable
 
     /// <summary>
     /// "MouseUtil: {ModeDisplayName} - {Active/Paused/Inactive}", e.g. "MouseUtil: Auto click -
-    /// Inactive" or "MouseUtil: Spin mode - Active". Mode display names match ModeSubtitleTextBlock.Text
+    /// Inactive" or "MouseUtil: Jiggle - Active". Mode display names match ModeSubtitleTextBlock.Text
     /// in MainWindow (see UpdateModeIndicators) so the tray tooltip and the main window agree on wording.
     /// </summary>
     private string BuildTooltipText()
     {
-        var modeName = _mode == AutomationMode.Spin ? "Spin mode" : "Auto click";
+        var modeName = _mode == AutomationMode.Jiggle ? "Jiggle" : "Auto click";
         var statusWord = !_isRunning ? "Inactive" : _isPaused ? "Paused" : "Active";
         return $"MouseUtil: {modeName} - {statusWord}";
     }
@@ -278,8 +279,8 @@ public sealed class TrayIconService : IDisposable
     /// standard documented workaround for TrackPopupMenu otherwise failing to dismiss itself when the
     /// user clicks away while this process isn't already the foreground app.
     ///
-    /// Rebuilt from scratch every time it's shown, so "Start Auto Click"/"Start Spin Mode"/"Stop"
-    /// enabled-vs-grayed and "Pause spinning on movement" checked/grayed always reflect state as of
+    /// Rebuilt from scratch every time it's shown, so "Start Auto Click"/"Start Jiggle"/"Stop"
+    /// enabled-vs-grayed and "Pause on movement" checked/grayed always reflect state as of
     /// this exact click - _isRunning (kept current by UpdateState) and a fresh ConfigService.Load()
     /// read (the actual source of truth PauseOnMovementToggle itself writes through - see
     /// MainWindow.PauseOnMovementToggle_Toggled) rather than anything cached from an earlier show.
@@ -302,7 +303,7 @@ public sealed class TrayIconService : IDisposable
 
             var startFlags = NativeMethods.MF_STRING | (_isRunning ? NativeMethods.MF_GRAYED : NativeMethods.MF_ENABLED);
             NativeMethods.AppendMenu(hMenu, startFlags, (IntPtr)MenuCommandStartClick, "Start Auto Click");
-            NativeMethods.AppendMenu(hMenu, startFlags, (IntPtr)MenuCommandStartSpin, "Start Spin Mode");
+            NativeMethods.AppendMenu(hMenu, startFlags, (IntPtr)MenuCommandStartJiggle, "Start Jiggle");
 
             var stopFlags = NativeMethods.MF_STRING | (_isRunning ? NativeMethods.MF_ENABLED : NativeMethods.MF_GRAYED);
             NativeMethods.AppendMenu(hMenu, stopFlags, (IntPtr)MenuCommandStop, "Stop");
@@ -313,7 +314,7 @@ public sealed class TrayIconService : IDisposable
             var pauseFlags = NativeMethods.MF_STRING
                 | (pauseOnMovement ? NativeMethods.MF_CHECKED : NativeMethods.MF_UNCHECKED)
                 | (_isRunning ? NativeMethods.MF_GRAYED : NativeMethods.MF_ENABLED);
-            NativeMethods.AppendMenu(hMenu, pauseFlags, (IntPtr)MenuCommandTogglePauseOnMovement, "Pause spinning on movement");
+            NativeMethods.AppendMenu(hMenu, pauseFlags, (IntPtr)MenuCommandTogglePauseOnMovement, "Pause on movement");
 
             NativeMethods.AppendMenu(hMenu, NativeMethods.MF_SEPARATOR, IntPtr.Zero, string.Empty);
             NativeMethods.AppendMenu(hMenu, NativeMethods.MF_STRING, (IntPtr)MenuCommandExit, "Exit");
@@ -342,9 +343,9 @@ public sealed class TrayIconService : IDisposable
             {
                 StartRequested?.Invoke(this, AutomationMode.Click);
             }
-            else if (command == MenuCommandStartSpin)
+            else if (command == MenuCommandStartJiggle)
             {
-                StartRequested?.Invoke(this, AutomationMode.Spin);
+                StartRequested?.Invoke(this, AutomationMode.Jiggle);
             }
             else if (command == MenuCommandStop)
             {

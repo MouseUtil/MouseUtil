@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap2="http://schemas.microsoft.com/appx/manifest/uap/windows10/2"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap2 uap3 uap10 uap5 desktop desktop6 rescap">
+
+  <Identity
+    Name="UtilLabs.MouseUtil"
+    Publisher="CN=BDF9BFD8-45F7-49F8-B51C-359A6C1E5927"
+    Version="2.0.0.0" />
+
+  <Properties>
+    <DisplayName>MouseUtil</DisplayName>
+    <PublisherDisplayName>Util Labs</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.18362.0" MaxVersionTested="10.0.26200.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us"/>
+  </Resources>
+
+  <Applications>
+    <Application Id="mouseUtil"
+      Executable="$targetnametoken$.exe"
+      EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="MouseUtil"
+        Description="Automates mouse clicks and cursor movement to keep your PC active."
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\MedTile.png"
+        Square44x44Logo="Assets\AppList.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\WideTile.png" />
+      </uap:VisualElements>
+      <Extensions>
+        <!-- Backs the "Start with Windows" setting (see SettingsPanel's StartWithWindowsCard and
+             Services/StartupTaskService) - TaskId here must match the string StartupTaskService
+             passes to StartupTask.GetAsync. Enabled="false" so a fresh install doesn't start with
+             Windows before the user opts in. -->
+        <uap5:Extension Category="windows.startupTask" Executable="MouseUtil.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap5:StartupTask TaskId="MouseUtilStartup" Enabled="false" DisplayName="MouseUtil" />
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

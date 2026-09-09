@@ -2,460 +2,512 @@
     x:Class="MouseUtil.Controls.SettingsPanel"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:controls="using:MouseUtil.Controls">
+    xmlns:controls="using:MouseUtil.Controls"
+    xmlns:settings="using:CommunityToolkit.WinUI.Controls">
 
     <UserControl.Resources>
-        <!-- HotkeyCaptionTextBlock's style: a Normal/Disabled VisualState transition (see
-             DimmableLabel) instead of a code-behind Brush snapshot, so it stays correctly themed even
-             while disabled (SetInputsEnabled disables HotkeyButton while automation is running). -->
-        <Style x:Key="HotkeyCaptionLabelStyle" TargetType="controls:DimmableLabel">
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="controls:DimmableLabel">
-                        <TextBlock
-                            x:Name="CaptionPresenter"
-                            Text="Start/Stop Hotkey"
-                            Foreground="{ThemeResource TextFillColorPrimaryBrush}">
-                            <VisualStateManager.VisualStateGroups>
-                                <VisualStateGroup x:Name="CommonStates">
-                                    <VisualState x:Name="Normal" />
-                                    <VisualState x:Name="Disabled">
-                                        <VisualState.Setters>
-                                            <Setter Target="CaptionPresenter.Foreground" Value="{ThemeResource TextFillColorDisabledBrush}" />
-                                        </VisualState.Setters>
-                                    </VisualState>
-                                </VisualStateGroup>
-                            </VisualStateManager.VisualStateGroups>
-                        </TextBlock>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
+        <!-- Shared visual language for the three section headers below (Display/Behavior/System) -
+             Title Case, no border/all-caps, matching native Windows 11 Settings' own group-header
+             look now that each row renders its own SettingsCard/SettingsExpander surface instead of
+             being wrapped in one shared CardBorderStyle card per section. -->
+        <Style x:Key="SectionHeaderTextBlockStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyStrongTextBlockStyle}" />
 
-        <!-- ShowActionCounterCaption/PauseOnMovementCaption's style: same Normal/Disabled
-             VisualState mechanism as HotkeyCaptionLabelStyle above - these two toggle rows are
-             disabled (SetInputsEnabled) while automation is running, so their labels need the same
-             DimmableLabel treatment. The other toggle rows' labels stay plain TextBlocks - none of
-             them are ever disabled while running. -->
-        <Style x:Key="ShowActionCounterCaptionLabelStyle" TargetType="controls:DimmableLabel">
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="controls:DimmableLabel">
-                        <TextBlock
-                            x:Name="CaptionPresenter"
-                            Text="Show click/spin counter"
-                            TextWrapping="Wrap"
-                            Foreground="{ThemeResource TextFillColorPrimaryBrush}">
-                            <VisualStateManager.VisualStateGroups>
-                                <VisualStateGroup x:Name="CommonStates">
-                                    <VisualState x:Name="Normal" />
-                                    <VisualState x:Name="Disabled">
-                                        <VisualState.Setters>
-                                            <Setter Target="CaptionPresenter.Foreground" Value="{ThemeResource TextFillColorDisabledBrush}" />
-                                        </VisualState.Setters>
-                                    </VisualState>
-                                </VisualStateGroup>
-                            </VisualStateManager.VisualStateGroups>
-                        </TextBlock>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <!-- ShowAdvancedIntervalDisplayCaption's style: same Normal/Disabled VisualState mechanism as
-             HotkeyCaptionLabelStyle/ShowActionCounterCaptionLabelStyle above. This row is disabled
-             while automation is running (see SetInputsEnabled) because, unlike a pure display
-             preference, this toggle directly drives which of MainWindow's BasicIntervalRow/
-             AdvancedIntervalRow is active (see MainWindow.UpdateAdvancedIntervalDisplayMode) - those
-             fields are locked while running for exactly the same reason, so this toggle has to be too,
-             or a user could still change the active interval configuration mid-run through this row. -->
-        <Style x:Key="ShowAdvancedIntervalDisplayCaptionLabelStyle" TargetType="controls:DimmableLabel">
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="controls:DimmableLabel">
-                        <TextBlock
-                            x:Name="CaptionPresenter"
-                            Text="Display advanced interval"
-                            TextWrapping="Wrap"
-                            Foreground="{ThemeResource TextFillColorPrimaryBrush}">
-                            <VisualStateManager.VisualStateGroups>
-                                <VisualStateGroup x:Name="CommonStates">
-                                    <VisualState x:Name="Normal" />
-                                    <VisualState x:Name="Disabled">
-                                        <VisualState.Setters>
-                                            <Setter Target="CaptionPresenter.Foreground" Value="{ThemeResource TextFillColorDisabledBrush}" />
-                                        </VisualState.Setters>
-                                    </VisualState>
-                                </VisualStateGroup>
-                            </VisualStateManager.VisualStateGroups>
-                        </TextBlock>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style x:Key="PauseOnMovementCaptionLabelStyle" TargetType="controls:DimmableLabel">
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="controls:DimmableLabel">
-                        <TextBlock
-                            x:Name="CaptionPresenter"
-                            Text="Pause spinning on movement"
-                            TextWrapping="Wrap"
-                            Foreground="{ThemeResource TextFillColorPrimaryBrush}">
-                            <VisualStateManager.VisualStateGroups>
-                                <VisualStateGroup x:Name="CommonStates">
-                                    <VisualState x:Name="Normal" />
-                                    <VisualState x:Name="Disabled">
-                                        <VisualState.Setters>
-                                            <Setter Target="CaptionPresenter.Foreground" Value="{ThemeResource TextFillColorDisabledBrush}" />
-                                        </VisualState.Setters>
-                                    </VisualState>
-                                </VisualStateGroup>
-                            </VisualStateManager.VisualStateGroups>
-                        </TextBlock>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <!-- Shared visual language for the three section headers below (Interface/General/Update) -
-             matches IntervalCaptionLabelStyle in MainWindow.xaml (the "INTERVAL" caption above the
-             minutes/seconds boxes), minus the DimmableLabel disable-while-running behavior, which
-             doesn't apply to these headers. -->
-        <Style x:Key="SectionHeaderTextBlockStyle" TargetType="TextBlock" BasedOn="{StaticResource CaptionTextBlockStyle}">
-            <Setter Property="Opacity" Value="0.6" />
-            <Setter Property="CharacterSpacing" Value="80" />
-        </Style>
+        <!-- MainWindow is fixed at a non-resizable 400 DIP wide (see MainWindow.SizeWindow) - after
+             this panel's own margins/padding, SettingsCard/SettingsExpander's PART_RootGrid only ever
+             gets ~340-360px. CommunityToolkit.WinUI.Controls.SettingsControls' own SettingsCard.xaml
+             (merged into SettingsExpander's template too, for its header row) declares a
+             ControlSizeTrigger on that root Grid keyed off two plain (non-themed) x:Double resources -
+             SettingsCardWrapThreshold (476) and SettingsCardWrapNoIconThreshold (286) - that drop the
+             trailing Content (ToggleSwitch/Button) below the Header/Icon once the control gets
+             narrower than those thresholds. Our content width always falls inside that wrap range, so
+             every row was stacking vertically instead of showing side by side. Overriding both keys
+             here (found higher in the resource-lookup chain than the toolkit's own generic.xaml
+             default, so this wins) with 0 means neither the "RightWrapped" nor the
+             "RightWrappedNoIcon" ControlSizeTrigger can ever match a real (>0) width, leaving the
+             default side-by-side "Right" state permanently active regardless of how narrow the window
+             is - exactly what this app's fixed 400 DIP width needs. -->
+        <x:Double x:Key="SettingsCardWrapThreshold">0</x:Double>
+        <x:Double x:Key="SettingsCardWrapNoIconThreshold">0</x:Double>
     </UserControl.Resources>
 
     <!-- Hosted once inside MainWindow's SettingsOverlay (see SettingsPanel.xaml.cs and
          MainWindow.xaml's SettingsHost) - a single instance, never duplicated. Rows are grouped
-         into three labeled sections (Interface/General/Update), all always visible. Each section is
-         wrapped in the same CardBorderStyle card (see App.xaml) used by MainWindow's Interval/
-         Auto-stop cards, with Spacing="16" on this outer StackPanel producing the same gap between
-         cards that MainWindow gets from each Border's own Margin="0,0,0,16" - that approach doesn't
-         apply here since these cards already share a StackPanel with Spacing. -->
+         into three labeled sections, each answering one question for the user rather than grouped
+         by implementation domain (Display: what you see - theme, interval display, stop button
+         display, taskbar icon progress; Behavior: how automation acts - hotkey, pause-on-movement,
+         launch behavior; System: how the app interacts with Windows itself - tray, startup task),
+         all always visible. Each row is its own CommunityToolkit SettingsCard/
+         SettingsExpander (native Windows 11 Settings look: icon + header side by side, trailing
+         content right-aligned) rather than the previous shared CardBorderStyle-bordered StackPanel
+         per section - Spacing="16" between sections, Spacing="4" within a section groups its cards
+         tightly. -->
     <StackPanel Spacing="16">
-        <!-- Interface -->
-        <Border Style="{StaticResource CardBorderStyle}">
-            <StackPanel Padding="20" Spacing="12">
-                <TextBlock Text="INTERFACE" Style="{StaticResource SectionHeaderTextBlockStyle}" />
-                <StackPanel Spacing="6">
-                    <!-- Each item's Content is a StackPanel (icon + label). Tag stays a plain "Light"/
-                         "Dark"/"System" string on every item, which is all ThemeComboBox_SelectionChanged
-                         and LoadFromConfig actually read. -->
-                    <ComboBox
-                        x:Name="ThemeComboBox"
-                        HorizontalAlignment="Stretch"
-                        SelectionChanged="ThemeComboBox_SelectionChanged">
-                        <ComboBoxItem
-                            x:Name="ThemeSystemItem"
-                            Tag="System"
-                            AutomationProperties.AutomationId="ThemeSystemItem">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE7F4;" FontSize="16" />
-                                <TextBlock Text="Follow system" />
-                            </StackPanel>
-                        </ComboBoxItem>
-                        <ComboBoxItem
-                            x:Name="ThemeLightItem"
-                            Tag="Light"
-                            AutomationProperties.AutomationId="ThemeLightItem">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE706;" FontSize="16" />
-                                <TextBlock Text="Light" />
-                            </StackPanel>
-                        </ComboBoxItem>
-                        <ComboBoxItem
-                            x:Name="ThemeDarkItem"
-                            Tag="Dark"
-                            AutomationProperties.AutomationId="ThemeDarkItem">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE708;" FontSize="16" />
-                                <TextBlock Text="Dark" />
-                            </StackPanel>
-                        </ComboBoxItem>
-                    </ComboBox>
+        <!-- Display -->
+        <StackPanel Spacing="4">
+            <TextBlock Text="Display" Style="{StaticResource SectionHeaderTextBlockStyle}" Margin="0,0,0,4" />
 
-                    <!-- Directly toggles whether Advanced interval display mode is active in
-                         MainWindow's Interval card (swapping BasicIntervalRow/AdvancedIntervalRow - see
-                         MainWindow.UpdateAdvancedIntervalDisplayMode, driven here via
-                         ShowAdvancedIntervalDisplayChanged), persisted as config.ShowAdvancedIntervalDisplay.
-                         This is the only way to reach that mode - there used to also be an
-                         AdvancedIntervalDisplayButton directly in the Interval card, but it was removed
-                         entirely in favor of controlling this from Settings only. Disabled while
-                         automation is running (see SetInputsEnabled below), same as
-                         ShowActionCounterToggle/PauseOnMovementToggle and for the same reason: the
-                         interval fields this toggle switches between are themselves locked while
-                         running, so a user can't be allowed to change which set is active mid-run either. -->
-                    <Grid ColumnSpacing="12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <controls:DimmableLabel
-                            x:Name="ShowAdvancedIntervalDisplayCaption"
-                            Grid.Column="0"
-                            VerticalAlignment="Center"
-                            Style="{StaticResource ShowAdvancedIntervalDisplayCaptionLabelStyle}" />
-                        <ToggleSwitch
-                            x:Name="ShowAdvancedIntervalDisplayToggle"
-                            Grid.Column="1"
-                            OnContent=""
-                            OffContent=""
-                            MinWidth="0"
-                            Width="44"
-                            Padding="0"
-                            HorizontalAlignment="Right"
-                            VerticalAlignment="Center"
-                            Toggled="ShowAdvancedIntervalDisplayToggle_Toggled"
-                            AutomationProperties.AutomationId="ShowAdvancedIntervalDisplayToggle"
-                            AutomationProperties.Name="Display advanced interval" />
-                    </Grid>
+            <!-- Theme: System/Light/Dark as plain RadioButtons (see the Items comment below) - persists
+                 config.Theme, fires ThemeSelectionChanged. Description mirrors the current selection
+                 so the collapsed header still communicates the active theme at a glance.
 
-                    <!-- Controls whether PowerToggleButton shows a running click/spin count - see
-                         MainWindow.UpdatePowerButtonRunningDisplay, driven here via
-                         ShowActionCounterChanged. -->
-                    <Grid x:Name="ShowActionCounterRow" ColumnSpacing="12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <controls:DimmableLabel
-                            x:Name="ShowActionCounterCaption"
-                            Grid.Column="0"
-                            VerticalAlignment="Center"
-                            Style="{StaticResource ShowActionCounterCaptionLabelStyle}" />
-                        <ToggleSwitch
-                            x:Name="ShowActionCounterToggle"
-                            Grid.Column="1"
-                            OnContent=""
-                            OffContent=""
-                            MinWidth="0"
-                            Width="44"
-                            Padding="0"
-                            HorizontalAlignment="Right"
-                            VerticalAlignment="Center"
-                            Toggled="ShowActionCounterToggle_Toggled"
-                            AutomationProperties.AutomationId="ShowActionCounterToggle"
-                            AutomationProperties.Name="Show click/spin counter" />
-                    </Grid>
-                </StackPanel>
-            </StackPanel>
-        </Border>
+                 IsExpanded="False" here and on the other 3 SettingsExpanders below is the standing
+                 requirement (cards start collapsed) - unrelated to, and independent from, the
+                 SettingsCard-wrapped-Items fix below. An earlier pass had briefly (and wrongly)
+                 attributed a real crash to expanders defaulting to True, then separately (and
+                 correctly, this time) found the actual cause was unrelated to IsExpanded at all - see
+                 the Items comment below for the real root cause and fix (each Items child must be a
+                 SettingsCard). The crash is fixed regardless of whether this defaults True or False;
+                 it stays False because that's what was actually asked for. -->
+            <settings:SettingsExpander
+                x:Name="ThemeExpander"
+                Header="Theme"
+                IsExpanded="False"
+                AutomationProperties.AutomationId="ThemeExpander">
+                <settings:SettingsExpander.HeaderIcon>
+                    <FontIcon x:Name="ThemeExpanderIcon" Glyph="&#xE7F4;" />
+                </settings:SettingsExpander.HeaderIcon>
+                <!-- Plain RadioButtons (Content IS the option's own label, so the circle sits directly
+                     to the left of its caption, the normal way) grouped in one shared, Header-less
+                     SettingsCard as the Items entry - NOT bare RadioButtons/a bare StackPanel directly
+                     as the Items child.
 
-        <!-- General -->
-        <Border Style="{StaticResource CardBorderStyle}">
-            <StackPanel Padding="20" Spacing="12">
-                <TextBlock Text="GENERAL" Style="{StaticResource SectionHeaderTextBlockStyle}" />
+                     That distinction matters a lot more than it looks: SettingsExpander.Items applies
+                     an ItemContainerStyleSelector whose styles (DefaultSettingsExpanderItemStyle /
+                     ClickableSettingsExpanderItemStyle in the toolkit's own SettingsExpander.xaml) are
+                     TargetType="SettingsCard" - handed to the container of EVERY Items child
+                     regardless of what that child actually is. A bare RadioButton (or CheckBox, or a
+                     StackPanel wrapping either - confirmed by directly swapping each of these in and
+                     re-testing) as an Items child crashes the app natively
+                     (STATUS_FATAL_USER_CALLBACK_EXCEPTION / 0xC000041D, always faulting inside
+                     Microsoft.UI.Xaml.dll at the same offset per Windows Event Log) the instant that
+                     item is realized, i.e. the moment this expander is first expanded - because a
+                     SettingsCard-TargetType Style is being applied to a container that isn't one.
+                     RadioButton itself, its GroupName-based grouping, and having multiple Items
+                     entries were all independently ruled out by testing (CheckBox reproduces
+                     identically; a single ungrouped item still crashes) - only wrapping in an actual
+                     SettingsCard fixes it.
 
-                <!-- Start/Stop global hotkey (F6 by default) - recorded via HotkeyButton_Click
-                     (enters recording mode) / HotkeyButton_KeyDown (captures the next key +
-                     currently-held modifiers, or Escape to cancel). Actual RegisterHotKey calls go
-                     through TryRegisterHotkey, a delegate MainWindow supplies (its
-                     GlobalHotkeyService/WndProc subclass can't move into this UserControl) - this is
-                     purely the display + input surface plus the rollback-on-conflict logic. -->
-                <StackPanel x:Name="HotkeyRow" Spacing="8">
-                    <controls:DimmableLabel x:Name="HotkeyCaptionTextBlock" Style="{StaticResource HotkeyCaptionLabelStyle}" />
-                    <Button
-                        x:Name="HotkeyButton"
-                        HorizontalAlignment="Stretch"
-                        HorizontalContentAlignment="Stretch"
-                        Click="HotkeyButton_Click"
-                        KeyDown="HotkeyButton_KeyDown"
-                        AutomationProperties.AutomationId="HotkeyButton"
-                        AutomationProperties.Name="Start/Stop hotkey">
-                        <Grid ColumnSpacing="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock
-                                x:Name="HotkeyButtonLabel"
-                                Grid.Column="0"
-                                HorizontalAlignment="Left"
-                                VerticalAlignment="Center" />
-                            <SymbolIcon
-                                Grid.Column="1"
-                                Symbol="Keyboard"
-                                VerticalAlignment="Center"
-                                AutomationProperties.AccessibilityView="Raw" />
-                        </Grid>
-                    </Button>
-                    <TextBlock
-                        x:Name="HotkeyErrorTextBlock"
-                        Foreground="{ThemeResource SystemFillColorCriticalBrush}"
-                        TextWrapping="Wrap"
-                        Visibility="Collapsed"
-                        AutomationProperties.AutomationId="HotkeyErrorTextBlock" />
-                </StackPanel>
+                     Deliberately ONE shared SettingsCard around all 3 RadioButtons (not one SettingsCard
+                     per option) - avoids reintroducing the "pseudo-card per option" chrome this
+                     restructuring was meant to get rid of in the first place.
 
-                <StackPanel Spacing="6">
-                    <!-- Closing behavior: when on, closing the main window (X button, Alt+F4, taskbar close)
-                         hides it to the system tray instead of exiting - see Services/TrayIconService and
-                         MainWindow.AppWindow_Closing. -->
-                    <Grid ColumnSpacing="12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock
-                            Grid.Column="0"
-                            Text="Keep running in system tray"
-                            VerticalAlignment="Center"
-                            TextWrapping="Wrap" />
-                        <ToggleSwitch
-                            x:Name="CloseToTrayToggle"
-                            Grid.Column="1"
-                            OnContent=""
-                            OffContent=""
-                            MinWidth="0"
-                            Width="44"
-                            Padding="0"
-                            HorizontalAlignment="Right"
-                            VerticalAlignment="Center"
-                            Toggled="CloseToTrayToggle_Toggled"
-                            AutomationProperties.AutomationId="CloseToTrayToggle"
-                            AutomationProperties.Name="Keep running in system tray" />
-                    </Grid>
+                     Padding="12,8,12,8" overrides the container style's own default
+                     SettingsExpanderItemPadding (58,8,44,8 - reserves 58px on the left for an icon
+                     column this row has no use for). 12px left/right reads as a normal, evenly-padded
+                     card row (close to SettingsCardPadding's own default of 16 uniform, used by every
+                     other plain SettingsCard in this file - HotkeyCard/CloseToTrayCard/etc. - just
+                     slightly tighter since this card nests one level deeper, inside an already-padded
+                     expander, at this app's fixed narrow ~340-360px width) - not the oversized 58/44
+                     indent, and not 0 either (flush-left with zero Padding read as too cramped/
+                     unbalanced against the card's own edge in testing). Left and right are the same
+                     value on purpose: with ContentAlignment="Left" below, Padding.Right doesn't get
+                     "used up" by content the way Padding.Left does (content stops at its own natural
+                     width, well short of the right edge), so matching the two numbers is what makes
+                     the row actually read as symmetrically padded rather than the apparent right-side
+                     gap being literally mirrored (that gap is unused stretch space, not Padding, and
+                     mirroring its raw size would push content back toward the right again).
 
-                    <Grid ColumnSpacing="12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <controls:DimmableLabel
-                            x:Name="PauseOnMovementCaption"
-                            Grid.Column="0"
-                            VerticalAlignment="Center"
-                            Style="{StaticResource PauseOnMovementCaptionLabelStyle}" />
-                        <ToggleSwitch
-                            x:Name="PauseOnMovementToggle"
-                            Grid.Column="1"
-                            OnContent=""
-                            OffContent=""
-                            MinWidth="0"
-                            Width="44"
-                            Padding="0"
-                            HorizontalAlignment="Right"
-                            VerticalAlignment="Center"
-                            Toggled="PauseOnMovementToggle_Toggled"
-                            AutomationProperties.AutomationId="PauseOnMovementToggle"
-                            AutomationProperties.Name="Pause spinning on movement" />
-                    </Grid>
+                     ContentAlignment="Left" is required too, separately from Padding: SettingsCard's
+                     default ContentAlignment ("Right") right-aligns whatever's in its Content slot,
+                     which is normally correct for a trailing ToggleSwitch/Button sitting opposite a
+                     Header - but this card has no Header/HeaderIcon to push against, so without this,
+                     the whole RadioButton StackPanel (Content here) would float flush-right instead of
+                     flush-left like a normal option list. Confirmed via the installed package's own
+                     SettingsCard.xml docs (ContentAlignment enum: Left/Right/Vertical - Left is
+                     documented as also hiding HeaderIcon/Header/Description, which this card doesn't
+                     set anyway, so no loss). No per-option icons - see ThemeExpander's own HeaderIcon
+                     above for the one Theme-level icon. -->
+                <settings:SettingsExpander.Items>
+                    <settings:SettingsCard Padding="18,8,12,8" ContentAlignment="Left" AutomationProperties.AutomationId="ThemeOptionsCard">
+                        <StackPanel Spacing="6">
+                            <RadioButton
+                                x:Name="ThemeSystemRadioButton"
+                                Content="Follow system"
+                                GroupName="ThemeGroup"
+                                Tag="System"
+                                Checked="ThemeRadioButton_Checked"
+                                AutomationProperties.AutomationId="ThemeSystemRadioButton"
+                                AutomationProperties.Name="Follow system" />
+                            <RadioButton
+                                x:Name="ThemeLightRadioButton"
+                                Content="Light"
+                                GroupName="ThemeGroup"
+                                Tag="Light"
+                                Checked="ThemeRadioButton_Checked"
+                                AutomationProperties.AutomationId="ThemeLightRadioButton"
+                                AutomationProperties.Name="Light" />
+                            <RadioButton
+                                x:Name="ThemeDarkRadioButton"
+                                Content="Dark"
+                                GroupName="ThemeGroup"
+                                Tag="Dark"
+                                Checked="ThemeRadioButton_Checked"
+                                AutomationProperties.AutomationId="ThemeDarkRadioButton"
+                                AutomationProperties.Name="Dark" />
+                        </StackPanel>
+                    </settings:SettingsCard>
+                </settings:SettingsExpander.Items>
+            </settings:SettingsExpander>
 
-                    <!-- Mirrors the running interval countdown as a progress bar on the app's taskbar icon
-                         (ITaskbarList3 - see Services/TaskbarProgressService), turning amber/yellow
-                         automatically while paused. Never disabled while running, so its label stays a plain
-                         TextBlock. -->
-                    <Grid ColumnSpacing="12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock
-                            Grid.Column="0"
-                            Text="Show countdown progress bar on taskbar icon"
-                            VerticalAlignment="Center"
-                            TextWrapping="Wrap" />
-                        <ToggleSwitch
-                            x:Name="ShowTaskbarProgressToggle"
-                            Grid.Column="1"
-                            OnContent=""
-                            OffContent=""
-                            MinWidth="0"
-                            Width="44"
-                            Padding="0"
-                            HorizontalAlignment="Right"
-                            VerticalAlignment="Center"
-                            Toggled="ShowTaskbarProgressToggle_Toggled"
-                            AutomationProperties.AutomationId="ShowTaskbarProgressToggle"
-                            AutomationProperties.Name="Show countdown progress bar on taskbar icon" />
-                    </Grid>
-                </StackPanel>
-            </StackPanel>
-        </Border>
+            <!-- Interval display: Basic/Advanced as RadioButtons - directly controls whether Advanced
+                 interval display mode is active in MainWindow's Interval card (swapping
+                 BasicIntervalRow/AdvancedIntervalRow - see MainWindow.UpdateAdvancedIntervalDisplayMode,
+                 driven here via ShowAdvancedIntervalDisplayChanged), persisted as
+                 config.ShowAdvancedIntervalDisplay. Disabled while automation is running (see
+                 SetInputsEnabled below), same as PauseOnMovementCard and for the same reason: the
+                 interval fields this switches between are themselves locked while running. -->
+            <settings:SettingsExpander
+                x:Name="IntervalDisplayExpander"
+                Header="Interval display"
+                IsExpanded="False"
+                AutomationProperties.AutomationId="IntervalDisplayExpander">
+                <settings:SettingsExpander.HeaderIcon>
+                    <SymbolIcon Symbol="Clock" />
+                </settings:SettingsExpander.HeaderIcon>
+                <!-- See ThemeExpander's own Items comment above for why this is one shared, Header-less
+                     SettingsCard (not bare RadioButtons/a bare StackPanel) with an explicit trimmed
+                     Padding, rather than the toolkit's own default 58px-left-indented item style. -->
+                <settings:SettingsExpander.Items>
+                    <settings:SettingsCard Padding="18,8,12,8" ContentAlignment="Left" AutomationProperties.AutomationId="IntervalDisplayOptionsCard">
+                        <StackPanel Spacing="6">
+                            <RadioButton
+                                x:Name="IntervalDisplayBasicRadioButton"
+                                Content="Minutes and Seconds"
+                                GroupName="IntervalDisplayGroup"
+                                Tag="Basic"
+                                Checked="IntervalDisplayRadioButton_Checked"
+                                AutomationProperties.AutomationId="IntervalDisplayBasicRadioButton"
+                                AutomationProperties.Name="Minutes and Seconds" />
+                            <RadioButton
+                                x:Name="IntervalDisplayAdvancedRadioButton"
+                                Content="Hours, Minutes, Seconds, Milliseconds"
+                                GroupName="IntervalDisplayGroup"
+                                Tag="Advanced"
+                                Checked="IntervalDisplayRadioButton_Checked"
+                                AutomationProperties.AutomationId="IntervalDisplayAdvancedRadioButton"
+                                AutomationProperties.Name="Hours, Minutes, Seconds, Milliseconds" />
+                        </StackPanel>
+                    </settings:SettingsCard>
+                </settings:SettingsExpander.Items>
+            </settings:SettingsExpander>
 
-        <!-- Update -->
-        <Border Style="{StaticResource CardBorderStyle}">
-            <StackPanel Padding="20" Spacing="12">
-                <TextBlock Text="UPDATE" Style="{StaticResource SectionHeaderTextBlockStyle}" />
+            <!-- Stop button display: merges the old ShowStopButtonDisplayToggle + StopButtonDisplayComboBox
+                 into one SettingsExpander whose header-row trailing content IS the toggle (not buried in
+                 the expanded items) - see AppConfig.ShowStopButtonDisplay's own comment for the off-state
+                 behavior, MainWindow.UpdatePowerButtonRunningDisplay/UpdatePowerButtonNoneDisplay for where
+                 this is read. The two RadioButtons below are only meaningful (and only enabled) while the
+                 toggle is on - see ShowStopButtonDisplayToggle_Toggled. -->
+            <settings:SettingsExpander
+                x:Name="StopButtonDisplayExpander"
+                Header="Stop button display"
+                IsExpanded="False"
+                AutomationProperties.AutomationId="StopButtonDisplayExpander">
+                <settings:SettingsExpander.HeaderIcon>
+                    <SymbolIcon Symbol="Stop" />
+                </settings:SettingsExpander.HeaderIcon>
+                <ToggleSwitch
+                    x:Name="ShowStopButtonDisplayToggle"
+                    OnContent=""
+                    OffContent=""
+                    MinWidth="0"
+                    Width="44"
+                    Padding="0"
+                    Toggled="ShowStopButtonDisplayToggle_Toggled"
+                    AutomationProperties.AutomationId="ShowStopButtonDisplayToggle"
+                    AutomationProperties.Name="Stop button display" />
+                <!-- See ThemeExpander's own Items comment above for why this is one shared, Header-less
+                     SettingsCard (not bare RadioButtons/a bare StackPanel) with an explicit trimmed
+                     Padding, rather than the toolkit's own default 58px-left-indented item style. -->
+                <settings:SettingsExpander.Items>
+                    <settings:SettingsCard Padding="18,8,12,8" ContentAlignment="Left" AutomationProperties.AutomationId="StopButtonDisplayOptionsCard">
+                        <StackPanel Spacing="6">
+                            <RadioButton
+                                x:Name="StopButtonDisplayCountdownRadioButton"
+                                Content="Time until next click/jiggle"
+                                GroupName="StopButtonDisplayGroup"
+                                Tag="Countdown"
+                                Checked="StopButtonDisplayRadioButton_Checked"
+                                AutomationProperties.AutomationId="StopButtonDisplayCountdownRadioButton"
+                                AutomationProperties.Name="Time until next click/jiggle" />
+                            <RadioButton
+                                x:Name="StopButtonDisplayCounterRadioButton"
+                                Content="Number of clicks/jiggles"
+                                GroupName="StopButtonDisplayGroup"
+                                Tag="Counter"
+                                Checked="StopButtonDisplayRadioButton_Checked"
+                                AutomationProperties.AutomationId="StopButtonDisplayCounterRadioButton"
+                                AutomationProperties.Name="Number of clicks/jiggles" />
+                        </StackPanel>
+                    </settings:SettingsCard>
+                </settings:SettingsExpander.Items>
+            </settings:SettingsExpander>
 
-                <!-- Manual update check/install - always starts idle here regardless of what the toggle
-                     below's launch-time auto-check found (see MainWindow.InitializeAutoUpdateCheck); this
-                     button's own state is deliberately independent of that, even though both share the
-                     same UpdateService/HttpClient instance (see UpdateChecker). First click checks GitHub
-                     Releases and (if newer) relabels the button to "Update to vX.Y.Z"; the second click on
-                     that relabeled button actually downloads + launches the installer, then asks
-                     MainWindow to close (via CloseAppRequested) so the installer can overwrite files this
-                     process would otherwise still hold open. -->
+            <!-- Mirrors the running interval countdown as a progress bar on the app's taskbar icon
+                 (ITaskbarList3 - see Services/TaskbarProgressService), turning amber/yellow
+                 automatically while paused. Never disabled while running. Grouped here rather than
+                 under the System section below - despite being implemented via a taskbar/OS API, it's
+                 a "what do I see while running" option from the user's point of view, same as Stop
+                 button display above. -->
+            <settings:SettingsCard
+                x:Name="ShowTaskbarProgressCard"
+                Header="Taskbar icon progress bar"
+                Description="Mirrors the countdown and turns amber while paused"
+                AutomationProperties.AutomationId="ShowTaskbarProgressCard">
+                <settings:SettingsCard.HeaderIcon>
+                    <FontIcon Glyph="&#xE9F5;" />
+                </settings:SettingsCard.HeaderIcon>
+                <ToggleSwitch
+                    x:Name="ShowTaskbarProgressToggle"
+                    OnContent=""
+                    OffContent=""
+                    MinWidth="0"
+                    Width="44"
+                    Padding="0"
+                    Toggled="ShowTaskbarProgressToggle_Toggled"
+                    AutomationProperties.AutomationId="ShowTaskbarProgressToggle"
+                    AutomationProperties.Name="Taskbar icon progress bar" />
+            </settings:SettingsCard>
+        </StackPanel>
+
+        <!-- Behavior -->
+        <StackPanel Spacing="4">
+            <TextBlock Text="Behavior" Style="{StaticResource SectionHeaderTextBlockStyle}" Margin="0,0,0,4" />
+
+            <!-- Start/Stop global hotkey (F6 by default) - recorded via HotkeyButton_Click
+                 (enters recording mode) / HotkeyButton_KeyDown (captures the next key +
+                 currently-held modifiers, or Escape to cancel). Actual RegisterHotKey calls go
+                 through TryRegisterHotkey, a delegate MainWindow supplies (its
+                 GlobalHotkeyService/WndProc subclass can't move into this UserControl) - this is
+                 purely the display + input surface plus the rollback-on-conflict logic.
+                 HotkeyButton's own Content is just its label now - the keyboard glyph already shown
+                 as HotkeyCard's HeaderIcon made the button's previous internal SymbolIcon redundant. -->
+            <settings:SettingsCard
+                x:Name="HotkeyCard"
+                Header="Hotkey"
+                AutomationProperties.AutomationId="HotkeyCard">
+                <settings:SettingsCard.HeaderIcon>
+                    <SymbolIcon Symbol="Keyboard" />
+                </settings:SettingsCard.HeaderIcon>
                 <Button
-                    x:Name="UpdateButton"
-                    HorizontalAlignment="Stretch"
-                    HorizontalContentAlignment="Stretch"
-                    Click="UpdateButton_Click"
-                    AutomationProperties.AutomationId="UpdateButton"
-                    AutomationProperties.Name="Check for updates">
-                    <Grid ColumnSpacing="8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock
-                            x:Name="UpdateButtonLabel"
-                            Grid.Column="0"
-                            Text="Check for updates"
-                            TextWrapping="Wrap"
-                            HorizontalAlignment="Left"
-                            VerticalAlignment="Center" />
-                        <FontIcon
-                            x:Name="UpdateButtonIcon"
-                            Grid.Column="1"
-                            FontFamily="{ThemeResource SymbolThemeFontFamily}"
-                            Glyph="&#xE72C;"
-                            VerticalAlignment="Center"
-                            AutomationProperties.AccessibilityView="Raw" />
-                    </Grid>
+                    x:Name="HotkeyButton"
+                    Click="HotkeyButton_Click"
+                    KeyDown="HotkeyButton_KeyDown"
+                    AutomationProperties.AutomationId="HotkeyButton"
+                    AutomationProperties.Name="Start/Stop hotkey">
+                    <TextBlock x:Name="HotkeyButtonLabel" />
                 </Button>
+            </settings:SettingsCard>
+            <TextBlock
+                x:Name="HotkeyErrorTextBlock"
+                Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                TextWrapping="Wrap"
+                Margin="12,4,12,0"
+                Visibility="Collapsed"
+                AutomationProperties.AutomationId="HotkeyErrorTextBlock" />
 
-                <!-- Default OFF (see AppConfig.AutoCheckForUpdates). When on, MainWindow silently checks
-                     for an update once at launch and, if found, shows its own accent-colored download
-                     icon next to SettingsButton - this toggle has no effect on UpdateButton above, which
-                     always starts idle either way. Purely read at next launch (see
-                     MainWindow.InitializeAutoUpdateCheck) - toggling this mid-session doesn't trigger an
-                     immediate check.
+            <!-- Pause on movement: merges the old plain-SettingsCard PauseOnMovementCard into a
+                 SettingsExpander whose header-row trailing content IS the master on/off toggle (same
+                 pattern StopButtonDisplayExpander uses for ShowStopButtonDisplayToggle above) - see
+                 AppConfig.PauseOnMovement's own comment for the master switch, and
+                 PauseOnMovementForAutoClick/PauseOnMovementForJiggle for the two per-mode sub-toggles
+                 below. Unlike StopButtonDisplayExpander's two RadioButtons (mutually exclusive, hence one
+                 shared header-less SettingsCard wrapping both), these two are independent, non-exclusive
+                 booleans - a user can plausibly want both on, one on, or neither - so each gets its own
+                 SettingsCard row (Header = mode name, ToggleSwitch as trailing Content), mirroring this
+                 same top-level Header+ToggleSwitch shape (CloseToTrayCard/etc.) one level deeper, rather
+                 than the RadioButton family's shared-card/left-aligned-Content layout. -->
+            <settings:SettingsExpander
+                x:Name="PauseOnMovementExpander"
+                Header="Pause on movement"
+                IsExpanded="False"
+                AutomationProperties.AutomationId="PauseOnMovementExpander">
+                <settings:SettingsExpander.HeaderIcon>
+                    <SymbolIcon Symbol="Pause" />
+                </settings:SettingsExpander.HeaderIcon>
+                <ToggleSwitch
+                    x:Name="PauseOnMovementToggle"
+                    OnContent=""
+                    OffContent=""
+                    MinWidth="0"
+                    Width="44"
+                    Padding="0"
+                    Toggled="PauseOnMovementToggle_Toggled"
+                    AutomationProperties.AutomationId="PauseOnMovementToggle"
+                    AutomationProperties.Name="Pause on movement" />
+                <!-- Two separate direct Items children (not one shared SettingsCard, unlike the
+                     RadioButton groups above) - each still has to be an actual SettingsCard per se
+                     ThemeExpander's own Items comment (a bare control/panel as an Items child crashes on
+                     expand). PART_ItemsRepeater's StackLayout (confirmed against the installed
+                     CommunityToolkit.WinUI.Controls.SettingsControls 8.2.251219 source,
+                     SettingsExpander.xaml's PART_ItemsRepeater template part) applies no Spacing between
+                     siblings (StackLayout's own default is 0) - the only separation Items siblings get
+                     for free is the 1px top BorderThickness (0,1,0,0) baked into
+                     DefaultSettingsExpanderItemStyle, applied to every item uniformly (no first-item
+                     exception - see SettingsExpanderItemStyleSelector). So the 6px gap matching the
+                     RadioButton StackPanels' Spacing="6" elsewhere in this file needs to be added
+                     explicitly, not assumed - Margin="0,6,0,0" on the second card is what actually
+                     realizes a 6px gap on top of that otherwise-0 default (the 1px separator border still
+                     renders at the second card's own top edge, inside that 6px margin - a subtle extra
+                     hairline the plain RadioButton stacks don't have, since RadioButton itself has no
+                     border to contribute one). -->
+                <settings:SettingsExpander.Items>
+                    <settings:SettingsCard x:Name="PauseOnMovementAutoClickCard" Header="Auto click" Height="48" MinHeight="48" AutomationProperties.AutomationId="PauseOnMovementAutoClickCard">
+                        <ToggleSwitch
+                            x:Name="PauseOnMovementAutoClickToggle"
+                            OnContent=""
+                            OffContent=""
+                            MinWidth="0"
+                            Width="44"
+                            Padding="0"
+                            Toggled="PauseOnMovementAutoClickToggle_Toggled"
+                            AutomationProperties.AutomationId="PauseOnMovementAutoClickToggle"
+                            AutomationProperties.Name="Auto click" />
+                    </settings:SettingsCard>
+                    <settings:SettingsCard x:Name="PauseOnMovementJiggleCard" Header="Jiggle" Height="48" MinHeight="48" AutomationProperties.AutomationId="PauseOnMovementJiggleCard">
+                        <ToggleSwitch
+                            x:Name="PauseOnMovementJiggleToggle"
+                            OnContent=""
+                            OffContent=""
+                            MinWidth="0"
+                            Width="44"
+                            Padding="0"
+                            Toggled="PauseOnMovementJiggleToggle_Toggled"
+                            AutomationProperties.AutomationId="PauseOnMovementJiggleToggle"
+                            AutomationProperties.Name="Jiggle" />
+                    </settings:SettingsCard>
+                </settings:SettingsExpander.Items>
+            </settings:SettingsExpander>
 
-                     Margin="0,-6,0,0" pulls this row closer to UpdateButton above, tightening their gap
-                     from the outer StackPanel's Spacing="12" down to 6 without touching that Spacing itself,
-                     which is local to this card's StackPanel and would also shrink the gap above UpdateButton
-                     (between it and the "UPDATE" header) if changed directly - untouched, that gap stays
-                     exactly as it is. -->
-                <Grid Margin="0,-6,0,0" ColumnSpacing="12">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock
-                        Grid.Column="0"
-                        Text="Check for updates on launch"
-                        VerticalAlignment="Center"
-                        TextWrapping="Wrap" />
-                    <ToggleSwitch
-                        x:Name="AutoCheckForUpdatesToggle"
-                        Grid.Column="1"
-                        OnContent=""
-                        OffContent=""
-                        MinWidth="0"
-                        Width="44"
-                        Padding="0"
-                        HorizontalAlignment="Right"
-                        VerticalAlignment="Center"
-                        Toggled="AutoCheckForUpdatesToggle_Toggled"
-                        AutomationProperties.AutomationId="AutoCheckForUpdatesToggle"
-                        AutomationProperties.Name="Check for updates on launch" />
-                </Grid>
-            </StackPanel>
-        </Border>
+            <!-- Applies on every app launch, independently of StartWithWindowsCard below (which only
+                 controls whether Windows itself launches the app at logon) - see MainWindow's
+                 constructor (RunAutomationOnLaunch) and LoadConfigIntoUi (PreferredMode). -->
+            <settings:SettingsExpander
+                x:Name="AppLaunchBehaviorExpander"
+                Header="App launch behavior"
+                Description="Settings that take effect on launch"
+                IsExpanded="False"
+                AutomationProperties.AutomationId="AppLaunchBehaviorExpander">
+                <settings:SettingsExpander.HeaderIcon>
+                    <SymbolIcon Symbol="Play" />
+                </settings:SettingsExpander.HeaderIcon>
+                <!-- Padding="18,8,16,8" on both Items cards below is an asymmetric mix of the two other
+                     patterns already in this file (see ThemeExpander's own Items comment for the
+                     default SettingsExpanderItemPadding value, 58,8,44,8, that both patterns start
+                     from): the left value (18, not the default 58) matches ThemeOptionsCard/
+                     IntervalDisplayOptionsCard/StopButtonDisplayOptionsCard's own override, so each
+                     card's Header text lines up under AppLaunchBehaviorExpander's icon rather than
+                     under its header text (the latter is what the untouched default padding gives
+                     PauseOnMovementAutoClickCard/JiggleCard above). The right value is NOT the
+                     untouched default (44) - confirmed via winapp ui's BoundingRectangle that 44
+                     lines the toggle up with this expander's OWN header-row toggles (PauseOnMovementToggle/
+                     ShowStopButtonDisplayToggle, offset ~28px left of a plain card to make room for the
+                     expander's chevron - expected/correct for THOSE, since they share the header row
+                     the chevron sits in), not with a plain non-expandable card's toggle
+                     (CloseToTrayToggle/ShowTaskbarProgressToggle/StartWithWindowsToggle), which sits
+                     28px further right since it has no chevron to share space with. These two Items
+                     cards want to match THAT plain-card position instead - SettingsCardPadding's own
+                     default right value (16) turned out to do exactly that once measured. -->
+                <settings:SettingsExpander.Items>
+                    <!-- Deliberately NOT gated by RunAutomationOnLaunchToggle below - Preferred mode is
+                         an independent setting (which mode the UI selects at launch), not exclusively
+                         a "what to force-run" option. -->
+                    <settings:SettingsCard Header="Preferred mode" Padding="18,8,16,8" AutomationProperties.AutomationId="PreferredModeCard">
+                        <DropDownButton
+                            x:Name="PreferredModeDropDownButton"
+                            AutomationProperties.AutomationId="PreferredModeDropDownButton"
+                            AutomationProperties.Name="Preferred mode">
+                            <DropDownButton.Flyout>
+                                <MenuFlyout Placement="Bottom">
+                                    <MenuFlyoutItem Text="Last used" Tag="LastUsed" Click="PreferredModeMenuFlyoutItem_Click" AutomationProperties.AutomationId="PreferredModeLastUsedItem" />
+                                    <MenuFlyoutItem Text="Auto click" Tag="Click" Click="PreferredModeMenuFlyoutItem_Click" AutomationProperties.AutomationId="PreferredModeAutoClickItem" />
+                                    <MenuFlyoutItem Text="Jiggle" Tag="Jiggle" Click="PreferredModeMenuFlyoutItem_Click" AutomationProperties.AutomationId="PreferredModeJiggleItem" />
+                                </MenuFlyout>
+                            </DropDownButton.Flyout>
+                        </DropDownButton>
+                    </settings:SettingsCard>
+                    <settings:SettingsCard Header="Start automatically" Padding="18,8,16,8" AutomationProperties.AutomationId="RunAutomationOnLaunchCard">
+                        <ToggleSwitch
+                            x:Name="RunAutomationOnLaunchToggle"
+                            OnContent=""
+                            OffContent=""
+                            MinWidth="0"
+                            Width="44"
+                            Padding="0"
+                            Toggled="RunAutomationOnLaunchToggle_Toggled"
+                            AutomationProperties.AutomationId="RunAutomationOnLaunchToggle"
+                            AutomationProperties.Name="Start automatically" />
+                    </settings:SettingsCard>
+                    <settings:SettingsCard Header="Enable &quot;Randomized interval&quot;" Padding="18,8,16,8" AutomationProperties.AutomationId="RandomizeIntervalOnLaunchCard">
+                        <ToggleSwitch
+                            x:Name="RandomizeIntervalOnLaunchToggle"
+                            OnContent=""
+                            OffContent=""
+                            MinWidth="0"
+                            Width="44"
+                            Padding="0"
+                            Toggled="RandomizeIntervalOnLaunchToggle_Toggled"
+                            AutomationProperties.AutomationId="RandomizeIntervalOnLaunchToggle"
+                            AutomationProperties.Name="Enable &quot;Randomized interval&quot;" />
+                    </settings:SettingsCard>
+                </settings:SettingsExpander.Items>
+            </settings:SettingsExpander>
+        </StackPanel>
+
+        <!-- System -->
+        <StackPanel Spacing="4">
+            <TextBlock Text="System" Style="{StaticResource SectionHeaderTextBlockStyle}" Margin="0,0,0,4" />
+
+            <!-- Closing behavior: when on, closing the main window (X button, Alt+F4, taskbar close)
+                 hides it to the system tray instead of exiting - see Services/TrayIconService and
+                 MainWindow.AppWindow_Closing. -->
+            <settings:SettingsCard
+                x:Name="CloseToTrayCard"
+                Header="Keep running in system tray"
+                AutomationProperties.AutomationId="CloseToTrayCard">
+                <settings:SettingsCard.HeaderIcon>
+                    <SymbolIcon Symbol="Pin" />
+                </settings:SettingsCard.HeaderIcon>
+                <ToggleSwitch
+                    x:Name="CloseToTrayToggle"
+                    OnContent=""
+                    OffContent=""
+                    MinWidth="0"
+                    Width="44"
+                    Padding="0"
+                    Toggled="CloseToTrayToggle_Toggled"
+                    AutomationProperties.AutomationId="CloseToTrayToggle"
+                    AutomationProperties.Name="Keep running in system tray" />
+            </settings:SettingsCard>
+
+            <!-- Launches the app (not automation) at Windows logon via the windows.startupTask
+                 extension in Package.appxmanifest - see Services/StartupTaskService. Hidden entirely
+                 if the app isn't running packaged/registered (StartupTask.GetAsync throws). -->
+            <settings:SettingsCard
+                x:Name="StartWithWindowsCard"
+                Header="Run on system startup"
+                Description="Opens app when Windows starts"
+                AutomationProperties.AutomationId="StartWithWindowsCard">
+                <settings:SettingsCard.HeaderIcon>
+                    <FontIcon Glyph="&#xF120;" />
+                </settings:SettingsCard.HeaderIcon>
+                <ToggleSwitch
+                    x:Name="StartWithWindowsToggle"
+                    OnContent=""
+                    OffContent=""
+                    MinWidth="0"
+                    Width="44"
+                    Padding="0"
+                    Toggled="StartWithWindowsToggle_Toggled"
+                    AutomationProperties.AutomationId="StartWithWindowsToggle"
+                    AutomationProperties.Name="Run on system startup" />
+            </settings:SettingsCard>
+            <TextBlock
+                x:Name="StartupTaskErrorTextBlock"
+                Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                TextWrapping="Wrap"
+                Margin="12,4,12,0"
+                Visibility="Collapsed"
+                AutomationProperties.AutomationId="StartupTaskErrorTextBlock" />
+        </StackPanel>
     </StackPanel>
 </UserControl>

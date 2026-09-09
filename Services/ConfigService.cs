@@ -4,15 +4,17 @@ using MouseUtil.Models;
 namespace MouseUtil.Services;
 
 /// <summary>
-/// Persists app settings to %USERPROFILE%\.mouse_utility_config.json.
+/// Persists app settings to %APPDATA%\MouseUtil\config.json.
 /// Every write reloads the file first and mutates a single field, so concurrent
 /// setting changes never clobber each other.
 /// </summary>
 internal static class ConfigService
 {
-    private static readonly string ConfigPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".mouse_utility_config.json");
+    private static readonly string ConfigDirectory = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "MouseUtil");
+
+    private static readonly string ConfigPath = Path.Combine(ConfigDirectory, "config.json");
 
     private static readonly object FileLock = new();
     private static readonly JsonSerializerOptions SerializerOptions = new() { WriteIndented = true };
@@ -32,6 +34,7 @@ internal static class ConfigService
             var config = LoadUnlocked();
             mutate(config);
             var json = JsonSerializer.Serialize(config, SerializerOptions);
+            Directory.CreateDirectory(ConfigDirectory);
             File.WriteAllText(ConfigPath, json);
         }
     }

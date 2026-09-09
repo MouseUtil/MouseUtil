@@ -1,4 +1,4 @@
-using Microsoft.UI;
+﻿using Microsoft.UI;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -8,9 +8,11 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using MouseUtil.Controls;
 using MouseUtil.Interop;
 using MouseUtil.Services;
+using System.Diagnostics;
 using System.Globalization;
 using System.Numerics;
 using Windows.Graphics;
@@ -35,7 +37,7 @@ public enum AutoStopMode
 public sealed partial class MainWindow : Window
 {
     private const double WindowWidthDip = 400;
-    private const double WindowHeightDip = 576;
+    private const double WindowHeightDip = 506;
 
     // The literal shrug emoticon shown instead of "Off"/"Stopped after N clicks" when this run's
     // very first automated click happened to land on and toggle off the Start/Stop button itself
@@ -71,7 +73,15 @@ public sealed partial class MainWindow : Window
     private AutoStopMode _autoStopMode = AutoStopMode.None;
     private AutoStopMode _lastConfiguredAutoStopMode = AutoStopMode.None;
     private int _autoStopCount = 100;
-    private bool _isSpinModeSelected;
+    private bool _isJiggleModeSelected;
+
+    // Guards ModeSegmentedControl_SelectionChanged from replaying the mode-switch side effects (icon
+    // wiggle/spin animation, status/auto-stop refresh, persisted LastMode, tray icon update) whenever
+    // UpdateModeIndicators sets ModeSegmentedControl.SelectedIndex purely to *sync* the control to
+    // _isJiggleModeSelected (initial load, or any other visual refresh) - as opposed to an actual
+    // user click on a segment or a tray-driven mode change (see SetSelectedMode), both of which should
+    // still replay all of that. Only ever true for the duration of that one assignment.
+    private bool _isSyncingModeSelection;
 
     // Randomize-interval toggle (RandomizeIntervalButton, in the Interval card's header row) -
     // deliberately never persisted to ConfigService, unlike most other toggles in this app: it
@@ -82,8 +92,8 @@ public sealed partial class MainWindow : Window
 
     // Advanced-interval-display mode (Hours/Minutes/Seconds/Milliseconds fields, in place of the plain
     // Minutes/Seconds ones) - unlike _isRandomizeIntervalEnabled above, this one mirrors a genuinely
-    // persisted setting (config.ShowAdvancedIntervalDisplay, owned by SettingsPanel's "Display
-    // advanced interval" toggle - see UpdateAdvancedIntervalDisplayMode) rather than always starting
+    // persisted setting (config.ShowAdvancedIntervalDisplay, owned by SettingsPanel's "Interval
+    // display" dropdown - see UpdateAdvancedIntervalDisplayMode) rather than always starting
     // Off. Purely a UI display-mode switch either way - MinutesBox.Value/SecondsBox.Value stay the
     // actual source of truth (see AdvancedIntervalInputBox_TextChanged), so this field never feeds into
     // MouseAutomationEngine.
@@ -100,22 +110,51 @@ public sealed partial class MainWindow : Window
 
     // The mode currently selected in the UI (regardless of whether automation is running) - used
     // wherever a caller needs "whatever mode the mode switch is currently showing" as an AutomationMode
-    // rather than the raw _isSpinModeSelected bool, e.g. seeding TrayIconService's tooltip while
+    // rather than the raw _isJiggleModeSelected bool, e.g. seeding TrayIconService's tooltip while
     // inactive (see UpdateState's mode parameter).
-    private AutomationMode CurrentSelectedMode => _isSpinModeSelected ? AutomationMode.Spin : AutomationMode.Click;
+    private AutomationMode CurrentSelectedMode => _isJiggleModeSelected ? AutomationMode.Jiggle : AutomationMode.Click;
 
-    // Click/spin action counter (see UpdatePowerButtonRunningDisplay). _completedActionCount counts
+    // Click/jiggle action counter (see UpdatePowerButtonRunningDisplay). _completedActionCount counts
     // every action Engine_ActionPerformed reports, with no exclusion for the first one - the first
     // action after the startup countdown (or the first action fired immediately via the hotkey, see
     // skipStartupCountdown) counts as action #1, same as every action after it. The button switches
     // from "Stop" to showing the counter as soon as _completedActionCount > 0, rather than a separate
     // flag. _runningMode is captured once at Start() time (rather than re-read from
-    // _isSpinModeSelected) since ModeSwitchButton is disabled mid-run anyway, but reading a captured
+    // _isJiggleModeSelected) since ModeSegmentedControl is disabled mid-run anyway, but reading a captured
     // value is more explicit/robust. _isPointerOverPowerButton tracks hover state so the counter text
     // yields to "Stop" while the pointer is over the button.
     private int _completedActionCount;
     private AutomationMode _runningMode;
     private bool _isPointerOverPowerButton;
+
+    // The user's own configured interval for this run (before any per-cycle randomize-interval draw -
+    // see MouseAutomationEngine.GetEffectiveInterval), captured once at Start() time same as
+    // _runningMode. StartImminentBlinkIfNeeded reads this to suppress the Imminent blink entirely on
+    // short intervals (see ImminentBlinkMinimumInterval) - MinutesBox/SecondsBox are disabled mid-run
+    // anyway, so a captured value is the same "explicit/robust over re-reading a live control" reasoning
+    // as _runningMode.
+    private TimeSpan _runningInterval;
+
+    // Whether the pointer button is currently held down over PowerToggleButton or PowerToggleAlternateButton.
+    // GetAlternateButtonForeground reads this for PowerToggleAlternateButton's press-tinted text color
+    // (both its Paused and Starting states), applied directly to the icon/label elements (see the
+    // "colorway" region below). Set by
+    // PowerToggleButton_PointerPressed and cleared by PointerReleased/Canceled/CaptureLost, so an
+    // interrupted press (e.g. capture stolen mid-drag) can never leave this stuck true.
+    private bool _isPowerButtonPressed;
+
+    // Countdown display mode's cache of the engine's most recent report - UpdatePowerButtonRunningDisplay
+    // (via UpdatePowerButtonCountdownDisplay) needs these outside of a fresh Engine_StatusChanged tick too
+    // (e.g. a hover enter/exit with no new engine report in between). _lastEngineStatusKind drives the
+    // Paused/Starting/JiggleStarting branches there; _lastEngineStatusRemaining is the pause's resume
+    // countdown once the engine's StillnessDisplayThreshold has passed (null before that, and reset to
+    // null again on fresh movement - see UpdatePowerButtonCountdownDisplay's isPaused branch, which is
+    // also where this drives the "Paused" vs "Resuming in Xs" button text split). Reset to Off/"Off"/null
+    // at the start of every run (see PowerToggleButton_Checked) so a leftover Paused state from a previous
+    // run can never leak into the brief window before the first real report arrives.
+    private StatusKind _lastEngineStatusKind = StatusKind.Off;
+    private string _lastEngineStatusText = "Off";
+    private TimeSpan? _lastEngineStatusRemaining;
 
     // Global Start/Stop hotkey (F6 by default, user-configurable in Settings) - the actual
     // RegisterHotKey calls live here (see GlobalHotkeyService, InitializeGlobalHotkey,
@@ -127,9 +166,9 @@ public sealed partial class MainWindow : Window
     // skip the normal startup countdown and fire the first action immediately, since a real user
     // click on the button itself should still use the countdown as before. _startTriggeredByTrayAutoClick
     // is the same idea for the tray context menu's "Start Auto Click" item (see
-    // TrayIconService_StartRequested) - only ever set for Click mode, since Spin mode already skips
+    // TrayIconService_StartRequested) - only ever set for Click mode, since Jiggle mode already skips
     // the startup grace unconditionally regardless of this flag (see the needsStartupGrace check in
-    // MouseAutomationEngine.RunLoopAsync), so "Start Spin Mode" from the tray needs no equivalent.
+    // MouseAutomationEngine.RunLoopAsync), so "Start Jiggle" from the tray needs no equivalent.
     private readonly GlobalHotkeyService _hotkeyService = new();
     private bool _startTriggeredByHotkey;
     private bool _startTriggeredByTrayAutoClick;
@@ -195,18 +234,28 @@ public sealed partial class MainWindow : Window
     private bool _showTaskbarProgress;
     private double _lastTaskbarProgress;
 
-    // Shared with SettingsPanel (see InitializeSettingsPanel's UpdateChecker wiring) so both the
-    // launch-time auto-check below and Settings' own manual "Check for updates" button reuse the same
-    // HttpClient instead of each hitting GitHub Releases separately - even though the two deliberately
-    // don't share UI state (see UpdateAvailableButton's own comment in MainWindow.xaml).
-    // _autoDetectedUpdate holds InitializeAutoUpdateCheck's result for as long as UpdateAvailableButton
-    // stays visible - read by UpdateAvailableFlyoutButton_Click when the user actually clicks through.
-    private readonly UpdateService _updateService = new();
-    private UpdateCheckResult? _autoDetectedUpdate;
-
     public MainWindow()
     {
         InitializeComponent();
+
+        // ButtonBase marks PointerPressed/PointerReleased e.Handled = true internally as part of its own
+        // press/click handling (confirmed empirically: the native CheckedPressed VisualState reacts fine
+        // to real input, but a plain XAML PointerPressed="..." attribute on PowerToggleButton never fired
+        // at all), so a normal XAML-attribute subscription (equivalent to handledEventsToo: false) never
+        // sees these events. AddHandler with handledEventsToo: true is the standard way around that - see
+        // MainWindow.xaml's own comment on PowerToggleButton for why these four aren't XAML attributes.
+        PowerToggleButton.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(PowerToggleButton_PointerPressed), handledEventsToo: true);
+        PowerToggleButton.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(PowerToggleButton_PointerReleased), handledEventsToo: true);
+        PowerToggleButton.AddHandler(UIElement.PointerCanceledEvent, new PointerEventHandler(PowerToggleButton_PointerCanceled), handledEventsToo: true);
+        PowerToggleButton.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler(PowerToggleButton_PointerCaptureLost), handledEventsToo: true);
+
+        // Same ButtonBase press-handling caveat applies to PowerToggleAlternateButton - reuses the exact
+        // same handler methods as PowerToggleButton above (they only read/write the shared
+        // _isPowerButtonPressed flag, not anything specific to which physical element was pressed).
+        PowerToggleAlternateButton.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(PowerToggleButton_PointerPressed), handledEventsToo: true);
+        PowerToggleAlternateButton.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(PowerToggleButton_PointerReleased), handledEventsToo: true);
+        PowerToggleAlternateButton.AddHandler(UIElement.PointerCanceledEvent, new PointerEventHandler(PowerToggleButton_PointerCanceled), handledEventsToo: true);
+        PowerToggleAlternateButton.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler(PowerToggleButton_PointerCaptureLost), handledEventsToo: true);
 
         // Set here rather than as a XAML Maximum="99999959" attribute on MinutesBox - see that
         // control's own XAML comment for why: WinUI's XAML compiler round-trips large double
@@ -221,13 +270,22 @@ public sealed partial class MainWindow : Window
         // 2^24, so this has to be a plain C# assignment too, not a XAML Maximum="99999999" attribute.
         AutoStopCountBox.Maximum = 99999999d;
 
-        Title = "MouseUtil";
+        // Kept in sync with SingleInstanceService.MainWindowTitle (never a separate literal here) -
+        // that's the exact string FindWindow searches for from a second-instance process, and it
+        // differs for Debug builds specifically so a Debug build can run alongside an installed
+        // Release build without either treating the other as a duplicate instance of itself.
+        Title = SingleInstanceService.MainWindowTitle;
         SystemBackdrop = new MicaBackdrop();
 
         ConfigureWindowSizingAndMaximizeBehavior();
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBarGrid);
+
+        // Default "Standard" caption-button height renders the OS min/close buttons short and flat.
+        // Tall makes the OS draw them to match this titlebar's own 48px row height instead, so they
+        // read as square rather than a shorter flat rectangle.
+        AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
 
         SizeWindow();
         CenterOnScreen();
@@ -236,13 +294,13 @@ public sealed partial class MainWindow : Window
         LoadConfigIntoUi();
         InitializeAdvancedIntervalLiveSync();
 
-        // AutoStopCountBox (the "After a number of clicks/spins" field in AutoStopDialog) gets the
+        // AutoStopCountBox (the "After a number of clicks/jiggles" field in AutoStopDialog) gets the
         // same digits-only character filter and MaxLength cap as the interval fields above - reuses
         // SetInputBoxMaxLength/HookIntervalCharacterFilter as-is, not interval-specific despite living
         // alongside interval setup. No decimal point allowed here at all (this field is always a whole
         // count), and 8 matches its own Maximum's digit count (99999999).
         SetInputBoxMaxLength(AutoStopCountBox, maxLength: 8, allowDecimalPoint: false);
-        SettingsVersionText.Text = $"v{UpdateService.GetCurrentVersionString()}";
+        SettingsVersionText.Text = $"v{GetCurrentVersionString()}";
         UpdateTitleBarCaptionSpacer();
 
         // MouseUtil.csproj's <ApplicationIcon> only embeds this icon into the compiled exe's PE
@@ -256,7 +314,6 @@ public sealed partial class MainWindow : Window
         InitializeGlobalHotkey();
         InitializeTrayIcon();
         _taskbarProgressService.Initialize(Win32Interop.GetWindowFromWindowId(AppWindow.Id));
-        InitializeAutoUpdateCheck();
 
         _engine.StatusChanged += Engine_StatusChanged;
         _engine.AutoStopped += Engine_AutoStopped;
@@ -276,18 +333,18 @@ public sealed partial class MainWindow : Window
         };
         ScheduleNextMidnightRefresh();
 
-        // AccentBrushSource/MutedBrushSource (hidden TextBlocks bound via {ThemeResource}) update
-        // their own Foreground automatically when the theme changes, but UpdateModeIndicators()
-        // only reads a one-time snapshot of those brushes and assigns it directly to
-        // ClickModeIcon/SpinModeIcon/ClickModeBox/SpinModeBox - so without this, those controls keep
-        // showing colors from whichever theme was active the last time the mode switch was clicked,
-        // until the user clicks it again. Re-running UpdateModeIndicators() on every actual theme
-        // change (covers both explicit Theme dropdown selection and the OS theme changing while
-        // "System" is selected) keeps them in sync immediately instead.
+        // ModeSegmentedControl's default look re-themes itself automatically (no manual snapshot-brush
+        // refresh needed here the way the old ModeSwitchButton's hand-rolled box coloring required).
         RootGrid.ActualThemeChanged += (_, _) =>
         {
-            UpdateModeIndicators();
             UpdateRandomizeIntervalIndicator();
+
+            // Native ToggleSwitches disabled while automation is running (see SettingsPanel.
+            // SetInputsEnabled/MainWindow.SetStopControlsEnabled) bake their Off-track color once, the
+            // moment they're disabled - see RefreshDisabledToggleSwitchesTheme's own doc comment for why
+            // that goes stale on a later theme change and needs forcing back to life here.
+            _settingsPanel.RefreshDisabledToggleSwitchesTheme();
+            SettingsPanel.RefreshToggleSwitchDisabledVisual(AutoStopToggle);
         };
 
         // AutoStopCountBox's InputBox part can be left with a stuck, invisible glyph layout the first
@@ -301,6 +358,28 @@ public sealed partial class MainWindow : Window
         // from _isRandomizeIntervalEnabled's actual (always-false-on-launch) value, rather than
         // relying on the XAML defaults happening to already match it.
         UpdateRandomizeIntervalIndicator();
+
+        // "Randomize interval when app launches" (SettingsPanel's "App launch behavior" expander) -
+        // overrides RandomizeIntervalButton's own always-resets-Off-each-session default (see
+        // _isRandomizeIntervalEnabled's own comment). Reuses RandomizeIntervalButton_CheckedChanged's
+        // existing logic exactly like PowerToggleButton.IsChecked below reuses
+        // PowerToggleButton_Checked's. Must run BEFORE that automation-start check, so
+        // _isRandomizeIntervalEnabled is already correct by the time _engine.Start reads it.
+        if (_settingsPanel.RandomizeIntervalOnLaunch)
+        {
+            RandomizeIntervalButton.IsChecked = true;
+        }
+
+        // "Start automatically" (SettingsPanel's "App launch behavior" expander) - applies
+        // on every launch, not just ones Windows itself triggered via StartWithWindowsCard/
+        // StartupTaskService. Mode is already correct by this point (LoadConfigIntoUi above set
+        // _isJiggleModeSelected from PreferredMode), so this just has to toggle the button - reuses
+        // 100% of PowerToggleButton_Checked's existing start logic, same as
+        // TrayIconService_StartRequested's identical "force mode + start" pattern.
+        if (_settingsPanel.RunAutomationOnLaunch)
+        {
+            PowerToggleButton.IsChecked = true;
+        }
     }
 
     /// <summary>
@@ -336,7 +415,6 @@ public sealed partial class MainWindow : Window
     {
         _settingsPanel.TryRegisterHotkey = (modifiers, key) => _hotkeyService.TryRegister(modifiers, key);
         _settingsPanel.UnregisterHotkey = () => _hotkeyService.Unregister();
-        _settingsPanel.UpdateChecker = _updateService;
 
         _settingsPanel.ThemeSelectionChanged += (_, theme) => ApplyTheme(theme);
         _settingsPanel.CloseToTrayChanged += (_, _) =>
@@ -353,95 +431,18 @@ public sealed partial class MainWindow : Window
             }
         };
         _settingsPanel.PauseOnMovementChanged += (_, _) => ResetStatusToOffIfNotRunning();
-        _settingsPanel.ShowActionCounterChanged += (_, _) => UpdatePowerButtonRunningDisplay();
+        _settingsPanel.StopButtonDisplayChanged += (_, _) => UpdatePowerButtonRunningDisplay();
         _settingsPanel.ShowAdvancedIntervalDisplayChanged += (_, _) => UpdateAdvancedIntervalDisplayMode();
-        _settingsPanel.CloseAppRequested += (_, _) =>
-        {
-            _isClosingConfirmed = true;
-            Close();
-        };
 
         SettingsHost.Children.Add(_settingsPanel);
     }
 
-    /// <summary>
-    /// Silently checks GitHub Releases once at startup, gated on Settings' "Automatically check for
-    /// updates" toggle (default off - see AppConfig.AutoCheckForUpdates) - unlike SettingsPanel's own
-    /// manual button, this never surfaces a "Checking..."/error state anywhere, since the user never
-    /// explicitly asked for it at this moment; a failure here just means UpdateAvailableButton stays
-    /// hidden, identical to "no update available" from the user's point of view. Deliberately does
-    /// NOT touch SettingsPanel.UpdateButton's own idle state - the two are independent (see
-    /// UpdateAvailableButton's comment in MainWindow.xaml for why).
-    /// </summary>
-    private async void InitializeAutoUpdateCheck()
+    /// <summary>Reads the running exe's file version, shown in Settings' SettingsVersionText.</summary>
+    private static string GetCurrentVersionString()
     {
-        if (!ConfigService.Load().AutoCheckForUpdates)
-        {
-            return;
-        }
-
-        try
-        {
-            var result = await _updateService.CheckForUpdateAsync(UpdateService.GetCurrentVersionString(), CancellationToken.None);
-            if (result.IsUpdateAvailable)
-            {
-                _autoDetectedUpdate = result;
-                UpdateAvailableFlyoutButtonLabel.Text = $"Update to v{result.LatestVersion}";
-                UpdateAvailableButton.Visibility = Visibility.Visible;
-            }
-        }
-        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException or FormatException)
-        {
-            // Silent by design - see this method's doc comment.
-        }
-    }
-
-    /// <summary>
-    /// Mirrors the download-then-close half of SettingsPanel.UpdateButton_Click, but standalone since
-    /// this button lives outside SettingsPanel - see UpdateAvailableButton's comment in
-    /// MainWindow.xaml. No "first click checks, second click downloads" distinction here: by the time
-    /// this button is visible at all, _autoDetectedUpdate is already populated, so every click goes
-    /// straight to downloading (or opening the release page, if the release has no .exe asset yet).
-    /// </summary>
-    private async void UpdateAvailableFlyoutButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_autoDetectedUpdate is not { } update)
-        {
-            return;
-        }
-
-        if (update.DownloadUrl is null)
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(update.ReleaseUrl) { UseShellExecute = true });
-            return;
-        }
-
-        UpdateAvailableFlyoutButton.IsEnabled = false;
-        UpdateAvailableFlyoutButtonLabel.Text = "Downloading...";
-        try
-        {
-            var installerPath = await _updateService.DownloadInstallerAsync(update.DownloadUrl, CancellationToken.None);
-            _updateService.LaunchInstaller(installerPath);
-            _isClosingConfirmed = true;
-            Close();
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException)
-        {
-            UpdateAvailableFlyoutButtonLabel.Text = "Couldn't download the update. Try again later.";
-            UpdateAvailableFlyoutButton.IsEnabled = true;
-        }
-    }
-
-    /// <summary>
-    /// Fires whenever the Flyout closes for any reason (light-dismiss, Escape, or the successful
-    /// download/close path above) - hiding UpdateAvailableButton unconditionally is correct either
-    /// way: on a genuine dismiss-without-updating it's the intended one-shot-notification behavior
-    /// (see UpdateAvailableButton's comment in MainWindow.xaml), and on the successful path the app is
-    /// already closing anyway, so touching this button's visibility is moot.
-    /// </summary>
-    private void UpdateAvailableFlyout_Closed(object sender, object e)
-    {
-        UpdateAvailableButton.Visibility = Visibility.Collapsed;
+        var assembly = System.Reflection.Assembly.GetExecutingAssembly();
+        var fileVersion = System.Diagnostics.FileVersionInfo.GetVersionInfo(assembly.Location).ProductVersion;
+        return !string.IsNullOrWhiteSpace(fileVersion) ? fileVersion : assembly.GetName().Version?.ToString() ?? "unknown";
     }
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e) => ShowSettingsOverlay();
@@ -464,8 +465,6 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        ModeSubtitleTextBlock.Text = "Settings";
-
         // MainContentGrid's Visibility.Collapsed no longer happens here directly - it's deferred to
         // AnimatePanelTransition's completion, once it has actually slid off screen (see that
         // method's own comment for why a Collapsed element can't be animated in the first place).
@@ -476,15 +475,17 @@ public sealed partial class MainWindow : Window
     /// <summary>
     /// Reverses ShowSettingsOverlay: slides the overlay back out (see ShowSettingsOverlay's own
     /// comment for why SettingsButton doesn't need any explicit handling here either).
-    /// ModeSubtitleTextBlock is set back to the mode name immediately/synchronously here, mirroring
-    /// what ShowSettingsOverlay already does for the opposite direction, so the subtitle updates
-    /// instantly rather than waiting on the 300ms slide-back animation. UpdateModeIndicators()'s call
-    /// in onCompleted below re-sets the exact same text once the animation finishes (harmless
-    /// redundancy - by then SettingsOverlay.Visibility is Collapsed so its own guard lets it through)
-    /// but is still needed there because it also drives icon colors and mode-box borders, which are
-    /// separate from this fix and should keep waiting for the transition to finish.
+    /// UpdateModeIndicators() in onCompleted re-syncs ModeSegmentedControl.SelectedIndex to
+    /// _isJiggleModeSelected once the slide-back animation finishes, guarding against drift between the
+    /// two - see that method's own comment. Also resets SettingsScrollViewer back to the top and calls
+    /// _settingsPanel.ResetAfterClose() (collapses every expander, clears the startup-task error
+    /// banner) here - not on the next open - so Settings always starts fresh however the user left it,
+    /// however it - delayed 300ms (matching AnimatePanelTransition's own slide duration - see its own
+    /// `duration`) rather than reset immediately, so none of that happens until the overlay has fully
+    /// slid off screen instead of being visible mid-slide. disableAnimation is still true on the ChangeView
+    /// itself since by the time it fires there's nothing left on screen for an animated scroll to show.
     /// </summary>
-    private void SettingsBackButton_Click(object sender, RoutedEventArgs e)
+    private async void SettingsBackButton_Click(object sender, RoutedEventArgs e)
     {
         if (_isSettingsTransitioning)
         {
@@ -492,10 +493,13 @@ public sealed partial class MainWindow : Window
         }
 
         _settingsPanel.HandleHostClosing();
-        ModeSubtitleTextBlock.Text = _isSpinModeSelected ? "Spin mode" : "Auto click";
 
         AnimatePanelTransition(outgoing: SettingsOverlay, incoming: MainContentGrid, reverse: true,
             onCompleted: UpdateModeIndicators);
+
+        await Task.Delay(300);
+        SettingsScrollViewer.ChangeView(null, 0, null, disableAnimation: true);
+        _settingsPanel.ResetAfterClose();
     }
 
     /// <summary>
@@ -637,9 +641,9 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Handles "Start Auto Click"/"Start Spin Mode" from the tray context menu (only reachable while
+    /// Handles "Start Auto Click"/"Start Jiggle" from the tray context menu (only reachable while
     /// inactive - see TrayIconService.ShowContextMenu). Forces the mode selector to the requested mode
-    /// (mirroring what ModeSwitchButton_Click does, via the shared SetSelectedMode) and then starts
+    /// (mirroring what a direct segment tap does, via the shared SetSelectedMode) and then starts
     /// automation by toggling PowerToggleButton exactly as a real click would - reusing 100% of
     /// PowerToggleButton_Checked's existing start logic (interval/auto-stop/pause-on-movement read live
     /// from the UI, engine start, input disabling, status text, tray icon update, etc.) rather than
@@ -651,8 +655,8 @@ public sealed partial class MainWindow : Window
     /// button, so PowerToggleButton_Checked skips the startup countdown and fires the first click
     /// immediately - matching the global hotkey's existing behavior, since "Start Auto Click" from the
     /// tray implies the user isn't at the main window (possibly not even hovering it) any more than a
-    /// hotkey press does. Spin mode is deliberately left alone: MouseAutomationEngine.RunLoopAsync's
-    /// needsStartupGrace check already skips the startup grace for Spin unconditionally, so there's no
+    /// hotkey press does. Jiggle mode is deliberately left alone: MouseAutomationEngine.RunLoopAsync's
+    /// needsStartupGrace check already skips the startup grace for Jiggle unconditionally, so there's no
     /// countdown to skip and no flag to set here.
     /// </summary>
     private void TrayIconService_StartRequested(object? sender, AutomationMode mode)
@@ -687,7 +691,7 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Handles "Pause spinning on movement" from the tray context menu (only reachable while inactive -
+    /// Handles "Pause on movement" from the tray context menu (only reachable while inactive -
     /// see TrayIconService.ShowContextMenu). Flips SettingsPanel's PauseOnMovementToggle itself
     /// (via TogglePauseOnMovement) rather than writing to AppConfig directly, so SettingsPanel's own
     /// Toggled handler stays the single place that persists the setting; this keeps the settings
@@ -919,7 +923,16 @@ public sealed partial class MainWindow : Window
 
         ApplyTheme(config.Theme);
 
-        _isSpinModeSelected = config.LastMode == "Spin";
+        // _settingsPanel.PreferredMode ("LastUsed" by default) can force a specific mode at launch
+        // regardless of LastMode - see AppConfig.PreferredMode's own comment and SettingsPanel's
+        // "Preferred mode" dropdown. Read from _settingsPanel rather than config directly, same as
+        // _closeToTray/_showTaskbarProgress above, since it already parsed its own persisted state.
+        _isJiggleModeSelected = _settingsPanel.PreferredMode switch
+        {
+            "Click" => false,
+            "Jiggle" => true,
+            _ => config.LastMode == "Jiggle"
+        };
         UpdateModeIndicators();
 
         _lastConfiguredAutoStopMode = Enum.TryParse<AutoStopMode>(config.AutoStopMode, out var savedAutoStopMode) ? savedAutoStopMode : AutoStopMode.None;
@@ -968,6 +981,13 @@ public sealed partial class MainWindow : Window
         titleBar.ButtonPressedBackgroundColor = isDark
             ? Color.FromArgb(40, 255, 255, 255)
             : Color.FromArgb(30, 0, 0, 0);
+
+        // A live OS theme flip (via UiSettings_ColorValuesChanged, which can fire mid-run while "Follow
+        // system" is selected) needs to immediately refresh Countdown mode's paused-button colors to
+        // whatever they resolve to under the new theme instead of waiting for the next engine tick -
+        // UpdatePowerButtonRunningDisplay already no-ops harmlessly if the button isn't currently checked,
+        // so this is safe to call unconditionally.
+        UpdatePowerButtonRunningDisplay();
     }
 
     private void UiSettings_ColorValuesChanged(UISettings sender, object args)
@@ -1022,37 +1042,45 @@ public sealed partial class MainWindow : Window
 
     private void SetInputsEnabled(bool enabled)
     {
-        ModeSwitchButton.IsEnabled = enabled;
+        // Relies entirely on Segmented's own default Disabled visual state here - no custom
+        // dimming/restyling, unlike the old ModeSwitchButton (see ModeSegmentedControl's own doc
+        // comment in MainWindow.xaml).
+        ModeSegmentedControl.IsEnabled = enabled;
         MinutesBox.IsEnabled = enabled;
         SecondsBox.IsEnabled = enabled;
         UpdateCompactSpinButtonIndicatorOpacity(MinutesBox, enabled);
         UpdateCompactSpinButtonIndicatorOpacity(SecondsBox, enabled);
-        AutoStopCheckBox.IsEnabled = enabled;
-        SetStopControlsEnabled(enabled && AutoStopCheckBox.IsChecked == true);
+        AutoStopToggle.IsEnabled = enabled;
+        SetStopControlsEnabled(enabled && AutoStopToggle.IsOn);
 
-        // IntervalCaptionTextBlock is a DimmableLabel control (see Controls/DimmableLabel.cs) -
-        // setting IsEnabled here drives its Normal/Disabled VisualState transition declaratively, the
-        // same way MinutesBox/SecondsBox's own Header text dims when their IsEnabled flips false.
+        // IntervalCaptionTextBlock/AutoStopCaption are DimmableLabel controls (see
+        // Controls/DimmableLabel.cs) - setting IsEnabled here drives their Normal/Disabled VisualState
+        // transition declaratively, the same way MinutesBox/SecondsBox's own Header text dims when their
+        // IsEnabled flips false.
         IntervalCaptionTextBlock.IsEnabled = enabled;
+        AutoStopCaption.IsEnabled = enabled;
 
         // Locked while running so the randomize-interval behavior can't change out from under an
         // in-progress run. The two disabled cases still look deliberately different for the button's
         // own chrome (see RandomizeIntervalButton.Resources in MainWindow.xaml): Unchecked+Disabled
         // stays fully invisible (ToggleButtonBackgroundDisabled/BorderBrushDisabled are overridden to
         // Transparent - there's nothing to indicate when the setting is off), while Checked+Disabled
-        // draws an outline (ToggleButtonBackgroundCheckedDisabled is Transparent,
-        // ToggleButtonBorderBrushCheckedDisabled is a gray) so the user can still see at a glance that
-        // the setting is on even while it's locked. RandomizeIntervalIcon's own Foreground/Opacity
-        // aren't set here at all, though - they're set from within UpdateRandomizeIntervalIndicator
-        // instead (called below, after IsEnabled is updated so it can see the new locked state), which
-        // now gives the icon the exact same dimmed look while locked regardless of Checked state - see
-        // that method's doc comment for why.
+        // falls back to the default ToggleButtonStyle's own filled, muted-accent pill
+        // (ToggleButtonBackgroundCheckedDisabled is no longer overridden here) with
+        // ToggleButtonBorderBrushCheckedDisabled's own gray border kept on top as the one remaining
+        // customization, so the user can still see at a glance that the setting is on even while it's
+        // locked. RandomizeIntervalIcon's own Foreground/Opacity aren't set here at all, though -
+        // they're set from within UpdateRandomizeIntervalIndicator instead (called below, after
+        // IsEnabled is updated so it can see the new locked state), which leaves the icon fully
+        // uncustomized (ClearValue'd Foreground, Opacity 1) while Checked+locked, versus a dimmed,
+        // theme-neutral gray at Opacity 0.6 while Unchecked+locked (matching its still-invisible chrome)
+        // - see that method's doc comment for the full reasoning.
         RandomizeIntervalButton.IsEnabled = enabled;
         UpdateRandomizeIntervalIndicator();
 
         // The four Hours/Minutes/Seconds/Milliseconds fields get the same locked-while-running
         // treatment as MinutesBox/SecondsBox above - the values within them can't change out from
-        // under an in-progress run. (SettingsPanel's own "Display advanced interval" toggle is
+        // under an in-progress run. (SettingsPanel's own "Interval display" dropdown is
         // locked the same way, independently, in SettingsPanel.SetInputsEnabled.)
         HoursBox.IsEnabled = enabled;
         AdvancedMinutesBox.IsEnabled = enabled;
@@ -1092,7 +1120,7 @@ public sealed partial class MainWindow : Window
         _startTriggeredByHotkey = false;
         _startTriggeredByTrayAutoClick = false;
 
-        if (AutoStopCheckBox.IsChecked == true)
+        if (AutoStopToggle.IsOn)
         {
             // Refuse to start rather than either run with no actual stop condition the user didn't
             // intend, or start a run whose configured stop time has already passed - the engine's own
@@ -1125,7 +1153,7 @@ public sealed partial class MainWindow : Window
 
         DateTime? stopAt = null;
         int? stopAfterActionCount = null;
-        if (AutoStopCheckBox.IsChecked == true)
+        if (AutoStopToggle.IsOn)
         {
             if (_autoStopMode == AutoStopMode.DateTime && _stopDateTime.HasValue)
             {
@@ -1152,6 +1180,28 @@ public sealed partial class MainWindow : Window
         // unambiguous rather than relying on that timing.
         _completedActionCount = 0;
         _runningMode = mode;
+        _runningInterval = interval;
+        _lastEngineStatusKind = StatusKind.Off;
+        _lastEngineStatusText = "Off";
+        _lastEngineStatusRemaining = null;
+        // Hide/reset PowerToggleAlternateButton left over from a previous run's Countdown-mode pause or
+        // startup grace (see UpdateAlternateButtonDisplay) before this run's first status tick arrives -
+        // otherwise a stop-while-paused/stop-during-startup followed immediately by a fresh start could
+        // leave it visible for a frame. Icon/label/automation name are reset back to their Paused-ready
+        // defaults too (Starting always overwrites its own content fresh every call, so it doesn't need a
+        // default here), so a previous run's leftover "Resuming in Xs"/"Stop" text (from a pause that was
+        // showing right when Stop was pressed) can never leak into a fresh run for a frame before
+        // UpdateAlternateButtonDisplay overwrites it, the next time this run actually pauses. The three
+        // shadowed background brushes aren't reset here - UpdateAlternateButtonDisplay/
+        // ApplyAlternateButtonBackgroundBrushes always repaints them before this button becomes visible
+        // again regardless, so there's nothing for a stale color to leak into.
+        ShowPowerButton(AlternateButtonState.Hidden);
+        StopImminentBlink(); // in case a previous run's Countdown-mode Imminent blink was still fading
+        PowerToggleAlternateLabel.ClearValue(TextBlock.FontSizeProperty); // in case a previous run shrank it
+        PowerToggleLabel.ClearValue(TextBlock.FontSizeProperty); // in case a previous run shrank it
+        PowerToggleAlternateIcon.Glyph = "\uF8AE"; // PauseBold glyph - UpdateAlternateButtonDisplay's own default.
+        PowerToggleAlternateLabel.Text = "Paused";
+        AutomationProperties.SetName(PowerToggleAlternateButton, "Power, Stop");
         SetStatusText("Off", StatusTone.Muted);
 
         SetInputsEnabled(false);
@@ -1160,9 +1210,8 @@ public sealed partial class MainWindow : Window
         PowerToggleLabel.Text = "Stop";
         AutomationProperties.SetName(PowerToggleButton, "Power, Stop");
 
-        _engine.Start(mode, interval, stopAt, stopAfterActionCount, _settingsPanel.PauseOnMovement, _isRandomizeIntervalEnabled, skipStartupCountdown);
+        _engine.Start(mode, interval, stopAt, stopAfterActionCount, _settingsPanel.IsPauseOnMovementActiveForMode(mode), _isRandomizeIntervalEnabled, skipStartupCountdown);
         _trayIconService.UpdateState(isRunning: true, isPaused: false, mode: mode);
-        UpdateModeIndicators();
     }
 
     // NumberBox only re-parses typed input into Value on focus loss/Enter, so a hotkey-triggered start
@@ -1310,11 +1359,9 @@ public sealed partial class MainWindow : Window
 
         // Discard any status hold left over from a fast start-then-stop, so
         // ReleaseStatusHoldAfterDelayAsync's still-pending timer can't later overwrite the
-        // "Stopped after N spin" text below with a stale buffered "Spinning in X" tick.
+        // "Stopped after N jiggle" text below with a stale buffered "Jiggling in X" tick.
         _statusHoldActive = false;
         _pendingStatusAfterHold = null;
-
-        UpdateModeIndicators();
 
         // Re-renders from _autoStopMode's current value - a no-op if this run left it untouched
         // (Auto Stop was enabled/configured), or reflects the "Configure" placeholder if this run's
@@ -1322,10 +1369,22 @@ public sealed partial class MainWindow : Window
         UpdateAutoStopButtonLabel();
 
         SetInputsEnabled(true);
+        StopImminentBlink(); // Stop pressed mid-blink shouldn't leave PowerToggleLabel faded for the Play/"Start" text below.
+        // Icon/label flip to Play/"Start" synchronously here, same tick as always - PowerToggleButton is
+        // correct and ready the instant it becomes visible, whether that's right now (below) or, if we
+        // were paused, at the exact moment the stop-while-paused transition below finishes.
         PowerToggleIcon.Glyph = "\uE768"; // Play glyph - pressing the pill now would start the engine.
         PowerToggleIcon.Visibility = Visibility.Visible;
+        PowerToggleLabel.ClearValue(TextBlock.FontSizeProperty); // in case this run's countdown text had shrunk it
         PowerToggleLabel.Text = "Start";
         AutomationProperties.SetName(PowerToggleButton, "Power, Start");
+
+        // Reveal PowerToggleButton immediately, whether or not we were paused - PowerToggleAlternateButton's
+        // Paused color is the same accent color as PowerToggleButton's own Checked background now (see
+        // GetAlternateButtonBackground/GetAlternateButtonForeground), so there's no jarring color mismatch
+        // to mask with an intermediate "fake Start" look on the way there anymore (an earlier version of
+        // this played one - see git history on this branch if that's ever worth revisiting).
+        ShowPowerButton(AlternateButtonState.Hidden);
 
         if (showShrug)
         {
@@ -1333,14 +1392,27 @@ public sealed partial class MainWindow : Window
         }
         else
         {
-            // Shows the counter result instead of plain "Off" only when the setting is on AND at
-            // least one counted action actually happened; otherwise it falls back to "Off" exactly
-            // as before.
-            var text = _settingsPanel.ShowActionCounter && _completedActionCount > 0
+            // Shows the counter result instead of plain "Off" whenever at least one counted action
+            // actually happened, regardless of "Stop button display"'s toggle/mode state - every
+            // combination now actively tracks/displays the count somewhere (the button in Counter mode,
+            // the status bar in Countdown mode and whenever the toggle is off), so there's no "hide it
+            // entirely" state left to gate this on.
+            var text = _completedActionCount > 0
                 ? $"Stopped after {FormatActionCount(_completedActionCount, _runningMode)}"
                 : "Off";
             SetStatusText(text, StatusTone.Muted);
         }
+    }
+
+    /// <summary>
+    /// PowerToggleAlternateButton's Click handler (both its Paused and Starting states) - just flips
+    /// PowerToggleButton's own IsChecked off, which raises PowerToggleButton_Unchecked and runs the entire
+    /// stop path (engine.Stop(), status text, swapping this button back out, everything) exactly as if
+    /// PowerToggleButton itself had been unchecked. Nothing stop-related is duplicated here.
+    /// </summary>
+    private void PowerToggleAlternateButton_Click(object sender, RoutedEventArgs e)
+    {
+        PowerToggleButton.IsChecked = false;
     }
 
     private void Engine_ActionPerformed(object? sender, ActionPerformedEventArgs e)
@@ -1368,21 +1440,55 @@ public sealed partial class MainWindow : Window
         UpdatePowerButtonRunningDisplay();
     }
 
+    private void PowerToggleButton_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        _isPowerButtonPressed = true;
+        UpdatePowerButtonRunningDisplay();
+    }
+
+    private void PowerToggleButton_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        _isPowerButtonPressed = false;
+        UpdatePowerButtonRunningDisplay();
+    }
+
+    private void PowerToggleButton_PointerCanceled(object sender, PointerRoutedEventArgs e)
+    {
+        _isPowerButtonPressed = false;
+        UpdatePowerButtonRunningDisplay();
+    }
+
+    private void PowerToggleButton_PointerCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        _isPowerButtonPressed = false;
+        UpdatePowerButtonRunningDisplay();
+    }
+
     /// <summary>
-    /// Refreshes PowerToggleLabel's text to either "Stop" or the running click/spin counter, and
-    /// PowerToggleIcon's visibility to match, while the engine is running. This is the single place
-    /// that decides Stop-vs-counter, so the icon's Visibility is set in the same conditional rather
-    /// than duplicated elsewhere: Visible while showing "Stop", Collapsed while showing the counter
-    /// (Collapsed, not Hidden, so the counter text can be centered with no leftover gap where the icon
-    /// was). Never touches the button's other visual style (colors).
+    /// Whether PowerToggleButton is currently showing the live Countdown treatment - true only when
+    /// ShowStopButtonDisplayToggle is on AND the radio buttons beneath it are set to Countdown. Centralizes
+    /// that compound check for every call site below that used to compare StopButtonDisplay directly
+    /// against StopButtonDisplayMode.Countdown/None before the toggle existed - back when "off" was
+    /// itself a third dropdown value (None) rather than an orthogonal toggle, checking the dropdown's
+    /// value alone was sufficient; now both need to agree.
+    /// </summary>
+    private bool IsCountdownDisplayActive =>
+        _settingsPanel.IsStopButtonDisplayShown && _settingsPanel.StopButtonDisplay == Controls.StopButtonDisplayMode.Countdown;
+
+    /// <summary>
+    /// Refreshes PowerToggleButton's live label/icon/background while the engine is running - the single
+    /// place that decides what the button shows, branching on SettingsPanel's ShowStopButtonDisplayToggle/
+    /// StopButtonDisplay (see Controls/SettingsPanel.xaml's toggle and "Stop button display" dropdown):
     ///
-    /// Shows "Stop" (icon visible) whenever the counter setting is off, the pointer is hovering the
-    /// button, or no action has fired yet (i.e. still in the startup countdown -
-    /// _completedActionCount == 0); shows the singular/plural "{count} click(s)" or "{count} spin(s)"
-    /// text (icon collapsed) for whichever mode is actually running otherwise - starting at "1
-    /// click"/"1 spin" the instant the first action fires, since every action is counted (no free
-    /// startup action). No-ops while the button isn't checked/running - hovering while stopped
-    /// shouldn't do anything.
+    /// - Toggle off: always plain "Stop" (icon visible), unconditionally - see UpdatePowerButtonNoneDisplay.
+    ///   Both the countdown and the count live on the status bar instead in this mode (see GetStatusBarText).
+    /// - Toggle on, Countdown mode: shows the engine's own live countdown text (e.g. "Clicking in 4s") in
+    ///   place of "Stop" - see UpdatePowerButtonCountdownDisplay for the paused/hover special cases.
+    /// - Toggle on, Counter mode: unchanged from before Countdown mode existed - "Stop" (icon visible) until
+    ///   the first action fires, then the running "{count} click(s)/jiggle(s)" text (icon collapsed) once
+    ///   _completedActionCount > 0, yielding back to "Stop" while the pointer hovers the button.
+    ///
+    /// No-ops while the button isn't checked/running - hovering while stopped shouldn't do anything.
     /// </summary>
     private void UpdatePowerButtonRunningDisplay()
     {
@@ -1391,19 +1497,452 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var showCounter = _settingsPanel.ShowActionCounter && !_isPointerOverPowerButton && _completedActionCount > 0;
+        if (!_settingsPanel.IsStopButtonDisplayShown)
+        {
+            UpdatePowerButtonNoneDisplay();
+            return;
+        }
 
+        if (IsCountdownDisplayActive)
+        {
+            UpdatePowerButtonCountdownDisplay();
+            return;
+        }
+
+        StopImminentBlink(); // Counter mode has no Imminent blink of its own - guards a mid-run switch away from Countdown.
+        var showCounter = _completedActionCount > 0 && !_isPointerOverPowerButton;
+        PowerToggleLabel.ClearValue(TextBlock.FontSizeProperty); // always short text here, never shrunk
         PowerToggleLabel.Text = showCounter ? FormatActionCount(_completedActionCount, _runningMode) : "Stop";
         PowerToggleIcon.Visibility = showCounter ? Visibility.Collapsed : Visibility.Visible;
     }
 
     /// <summary>
+    /// ShowStopButtonDisplayToggle-off half of UpdatePowerButtonRunningDisplay: PowerToggleButton always
+    /// shows plain "Stop" with its Stop icon, unconditionally, for the entire run - never the click/jiggle
+    /// count (Counter mode) and never a countdown or the separate PowerToggleAlternateButton (Countdown
+    /// mode's pause-on-movement and Click-mode startup-grace elements). Both the countdown-
+    /// until-next-action and the running click/jiggle count move to the status bar instead (see
+    /// GetStatusBarText).
+    ///
+    /// ShowPowerButton(AlternateButtonState.Hidden) is called unconditionally/idempotently here (harmless
+    /// once PowerToggleButton is already the shown element) specifically so that turning the toggle off
+    /// *while* PowerToggleAlternateButton is currently showing (left over from Countdown mode) immediately
+    /// reverts to the plain button - StopButtonDisplayChanged already calls UpdatePowerButtonRunningDisplay()
+    /// on every toggle/dropdown change while running (see InitializeSettingsPanel), so this is the only
+    /// place that needs to handle that hand-off. PowerToggleLabel.ClearValue(FontSizeProperty) undoes a
+    /// previous Countdown-mode run's ApplyCountdownFontSize shrink, in case the display mode was switched
+    /// mid-run.
+    /// </summary>
+    private void UpdatePowerButtonNoneDisplay()
+    {
+        ShowPowerButton(AlternateButtonState.Hidden);
+        StopImminentBlink(); // This state has no Imminent blink of its own - guards a mid-run switch away from Countdown.
+        PowerToggleIcon.Glyph = "\uEE95"; // Stop glyph
+        PowerToggleIcon.Visibility = Visibility.Visible;
+        PowerToggleLabel.ClearValue(TextBlock.FontSizeProperty);
+        PowerToggleLabel.Text = "Stop";
+    }
+
+    /// <summary>
+    /// IsCountdownDisplayActive's half of UpdatePowerButtonRunningDisplay (see that method for Counter
+    /// mode and the much simpler toggle-off state - UpdatePowerButtonNoneDisplay - which never touches
+    /// this method or PowerToggleAlternateButton at all). Delegates entirely to UpdateAlternateButtonDisplay whenever the
+    /// engine's last report is StatusKind.Paused (pause-on-movement) or StatusKind.Starting
+    /// (Click mode's 3-second startup grace) - that method owns everything about PowerToggleAlternateButton
+    /// (visibility, colors, text/icon content) for both. Both checks come before the hover check
+    /// deliberately: Starting must never yield to hover's "Stop" text (see UpdateAlternateButtonDisplay's
+    /// own doc comment for why), so it can't be handled alongside JiggleStarting further down where hover
+    /// already won. Otherwise this operates on PowerToggleButton exactly as it always has: swapping
+    /// PowerToggleAlternateButton back out instantly (no animation - the one animated transition in this
+    /// rewrite is the stop-while-paused exit, driven from PowerToggleButton_Unchecked, never from here) if
+    /// a resume/startup grace just ended, then falling through to the same hover/JiggleStarting/live-
+    /// countdown branches as before.
+    ///
+    /// Label/icon content logic (what text/icon to show, as opposed to which element or what color) is
+    /// otherwise unchanged from before this rewrite: hovering always wins and shows the Stop glyph +
+    /// "Stop" (for every remaining case reaching this far - Running/Imminent/JiggleStarting); everything
+    /// else shows the engine's own live status text verbatim with the icon collapsed. JiggleStarting (Jiggle
+    /// mode's one-shot "Starting now", which unlike Click mode's Starting has no real countdown to show)
+    /// still shows the plain Stop glyph + "Stop" rather than the engine's live status text, matching
+    /// Counter mode's behavior for this same phase and avoiding a duplicate of the same text already shown
+    /// on the status bar (see GetStatusBarText's _completedActionCount == 0 fallback to e.Text).
+    /// </summary>
+    private void UpdatePowerButtonCountdownDisplay()
+    {
+        if (_lastEngineStatusKind == StatusKind.Paused)
+        {
+            StopImminentBlink();
+            UpdateAlternateButtonDisplay(AlternateButtonState.Paused);
+            return;
+        }
+
+        if (_lastEngineStatusKind == StatusKind.Starting)
+        {
+            StopImminentBlink();
+            UpdateAlternateButtonDisplay(AlternateButtonState.Starting);
+            return;
+        }
+
+        // Neither Paused nor Starting - PowerToggleButton is the element that should be shown. Swap
+        // PowerToggleAlternateButton back out instantly if it's still showing from a pause/startup grace
+        // that just ended (as opposed to via Stop, which instead goes through PowerToggleButton_Unchecked
+        // and never reaches this branch, since the button isn't Checked anymore by the time that runs).
+        // Idempotent - a no-op on every call after the first, since _alternateButtonState is already
+        // Hidden by then.
+        if (_alternateButtonState != AlternateButtonState.Hidden)
+        {
+            ShowPowerButton(AlternateButtonState.Hidden);
+        }
+
+        if (_isPointerOverPowerButton)
+        {
+            StopImminentBlink(); // hovering always shows static "Stop" - it shouldn't blink.
+            PowerToggleIcon.Glyph = "\uEE95"; // Stop glyph
+            PowerToggleIcon.Visibility = Visibility.Visible;
+            PowerToggleLabel.ClearValue(TextBlock.FontSizeProperty); // always short text here, never shrunk
+            PowerToggleLabel.Text = "Stop";
+            return;
+        }
+
+        if (_lastEngineStatusKind == StatusKind.JiggleStarting)
+        {
+            // Jiggle mode's one-shot "Starting now" has no real countdown (unlike Click mode's Starting,
+            // handled above) - nothing to show on the button, so it stays plain "Stop" here, matching
+            // Counter mode's behavior for this same phase and avoiding a duplicate of the same text
+            // already shown on the status bar (see GetStatusBarText's _completedActionCount == 0
+            // fallback to e.Text).
+            StopImminentBlink(); // JiggleStarting is never StatusKind.Imminent, but be defensive.
+            PowerToggleIcon.Glyph = "\uEE95"; // Stop glyph
+            PowerToggleIcon.Visibility = Visibility.Visible;
+            PowerToggleLabel.ClearValue(TextBlock.FontSizeProperty); // always short text here, never shrunk
+            PowerToggleLabel.Text = "Stop";
+            return;
+        }
+
+        // Live countdown text - can grow arbitrarily long (large hour counts, see
+        // ApplyCountdownFontSize), so its font size needs to shrink to match.
+        PowerToggleIcon.Visibility = Visibility.Collapsed;
+        ApplyCountdownFontSize(PowerToggleLabel, _lastEngineStatusRemaining);
+        PowerToggleLabel.Text = _lastEngineStatusText;
+
+        // Last 3 seconds of this countdown: blink the text as an extra "about to fire" cue. Reverts the
+        // instant the kind is next reported as Running (the action just fired and a fresh, non-Imminent
+        // interval began) - see StartImminentBlinkIfNeeded/StopImminentBlink's own doc comments.
+        if (_lastEngineStatusKind == StatusKind.Imminent)
+        {
+            StartImminentBlinkIfNeeded();
+        }
+        else
+        {
+            StopImminentBlink();
+        }
+    }
+
+    /// <summary>
+    /// Countdown mode's Paused-and-Starting half of UpdatePowerButtonCountdownDisplay - owns everything
+    /// about PowerToggleAlternateButton (see MainWindow.xaml's comment on it for why it's a wholly
+    /// separate element rather than anything layered on top of PowerToggleButton) whenever the engine's
+    /// last report is StatusKind.Paused (pause-on-movement) or StatusKind.Starting (Click
+    /// mode's 3-second startup grace, shown here only while Countdown mode is selected - see
+    /// UpdatePowerButtonCountdownDisplay): visibility (swapped in instantly here, no animation), colors
+    /// (GetAlternateButtonBackground/GetAlternateButtonForeground - see those methods' own doc comments),
+    /// and text/icon content.
+    ///
+    /// Starting is handled first and returns immediately, deliberately bypassing the shared hover-Stop
+    /// check below: unlike Paused, hovering the button during the startup countdown should keep showing
+    /// the countdown, not "Stop" - the countdown is brief (max 3s) and is the entire point of this state,
+    /// so hiding it behind "Stop" for the duration of a hover would read as more confusing than helpful.
+    /// It never needs ApplyCountdownFontSize's large-hour-count shrink either, for the same reason
+    /// Imminent's blink doesn't (a sub-4-second remaining value never reaches that tier), and never shows
+    /// an icon - just _lastEngineStatusText passed straight through, the exact same text
+    /// PowerToggleButton itself would otherwise be showing on the status bar (see GetStatusBarText).
+    ///
+    /// Paused keeps its original shape: hover-Stop first (shared across both states via
+    /// _isPointerOverPowerButton, since pointer-over doesn't care which physical element the pointer
+    /// actually landed on), then splits on _lastEngineStatusRemaining into plain-Paused vs
+    /// Resuming-in-Xs. The foreground color is computed once up front and applied uniformly to every
+    /// branch (Starting included) rather than per-branch, since GetAlternateButtonForeground wants the
+    /// exact same treatment applied everywhere for a given state - see its own doc comment.
+    /// </summary>
+    private void UpdateAlternateButtonDisplay(AlternateButtonState state)
+    {
+        ShowPowerButton(state);
+        ApplyAlternateButtonBackgroundBrushes(state);
+
+        var foregroundBrush = new SolidColorBrush(GetAlternateButtonForeground(state));
+        PowerToggleAlternateIcon.Foreground = foregroundBrush;
+        PowerToggleAlternateLabel.Foreground = foregroundBrush;
+
+        if (state == AlternateButtonState.Starting)
+        {
+            PowerToggleAlternateIcon.Visibility = Visibility.Collapsed;
+            PowerToggleAlternateLabel.ClearValue(TextBlock.FontSizeProperty);
+            PowerToggleAlternateLabel.Text = _lastEngineStatusText;
+            return;
+        }
+
+        if (_isPointerOverPowerButton)
+        {
+            PowerToggleAlternateLabel.ClearValue(TextBlock.FontSizeProperty); // always short text here, never shrunk
+            PowerToggleAlternateIcon.Glyph = "\uEE95"; // Stop glyph
+            PowerToggleAlternateIcon.Visibility = Visibility.Visible;
+            PowerToggleAlternateLabel.Text = "Stop";
+            return;
+        }
+
+        if (_lastEngineStatusRemaining.HasValue)
+        {
+            // 5+ seconds of stillness have passed (see MouseAutomationEngine's StillnessDisplayThreshold) -
+            // the engine now has an actual resume countdown to report, so show it directly here instead of
+            // the plain "Paused" text (the status bar shows the click/jiggle count throughout the whole pause
+            // instead - see GetStatusBarText). Reuses the engine's own countdown formatting/threshold logic
+            // (public specifically for this) so "now" vs "in Xs" phrasing matches the rest of the app
+            // exactly. Fresh movement resets this back to null (see the engine's manualMovementDetected
+            // report), which naturally reverts this branch back to plain "Paused" below. Can grow
+            // arbitrarily long (large hour counts, see ApplyCountdownFontSize) same as the main running
+            // countdown, since it's bounded by the same configured interval.
+            PowerToggleAlternateIcon.Visibility = Visibility.Collapsed;
+            ApplyCountdownFontSize(PowerToggleAlternateLabel, _lastEngineStatusRemaining);
+            PowerToggleAlternateLabel.Text = GetPausedStatusPhrase();
+            return;
+        }
+
+        PowerToggleAlternateLabel.ClearValue(TextBlock.FontSizeProperty); // always short text here, never shrunk
+        PowerToggleAlternateIcon.Glyph = "\uF8AE"; // PauseBold glyph
+        PowerToggleAlternateIcon.Visibility = Visibility.Visible;
+        PowerToggleAlternateLabel.Text = GetPausedStatusPhrase();
+    }
+
+    /// <summary>
+    /// The paused-state phrase text, shared between UpdateAlternateButtonDisplay's Paused-state
+    /// PowerToggleAlternateLabel (IsCountdownDisplayActive's on-button paused state) and
+    /// GetStatusBarText's toggle-off base text for a Paused report (the toggle-off state has no
+    /// button-side paused indicator of its own, but still needs this exact phrasing on the status bar
+    /// instead of the engine's raw "Paused... Resuming in Xs" e.Text, which is phrased for Counter mode -
+    /// see GetStatusBarText). Reads
+    /// _lastEngineStatusRemaining exactly as UpdateAlternateButtonDisplay's Paused branch always has: once
+    /// the engine's StillnessDisplayThreshold has passed and a real resume countdown is available,
+    /// "Resuming in Xs"/"Resuming now" (via the engine's own FormatCountdownStatus/FormatSeconds, so the
+    /// "now" vs "in Xs" split matches the rest of the app exactly); otherwise plain "Paused" for the first
+    /// few seconds of stillness before that. Text only - button-specific concerns (icon glyph/visibility,
+    /// ApplyCountdownFontSize) stay in UpdateAlternateButtonDisplay itself. Never called for the Starting
+    /// state, which passes _lastEngineStatusText straight through instead of building its own phrase.
+    /// </summary>
+    private string GetPausedStatusPhrase() =>
+        _lastEngineStatusRemaining.HasValue
+            ? MouseAutomationEngine.FormatCountdownStatus("Resuming now", _lastEngineStatusRemaining.Value, $"Resuming in {MouseAutomationEngine.FormatSeconds(_lastEngineStatusRemaining.Value)}")
+            : "Paused";
+
+    /// <summary>
+    /// Sets (or, if shrinking isn't needed, clears back to the inherited/base size) `label`'s FontSize for
+    /// a countdown string - see GetCountdownFontSize for the actual sizing logic.
+    /// </summary>
+    private void ApplyCountdownFontSize(TextBlock label, TimeSpan? remaining)
+    {
+        var fontSize = GetCountdownFontSize(remaining);
+        if (fontSize.HasValue)
+        {
+            label.FontSize = fontSize.Value;
+        }
+        else
+        {
+            label.ClearValue(TextBlock.FontSizeProperty);
+        }
+    }
+
+    /// <summary>
+    /// Font size for a countdown string like "Clicking in 23h 14m 06s"/"Resuming in 23h 14m 06s" (see
+    /// MouseAutomationEngine.FormatSeconds's "Xh Ym Zs" format) - minutes/seconds always stay at 2 digits
+    /// there, but hours can grow arbitrarily large (HoursBox's Maximum is 1,666,665), long enough to
+    /// overflow PowerToggleButton/PowerToggleAlternateButton's fixed 220px width at the normal size. Steps
+    /// down PowerToggleButton's own FontSize (read fresh each time rather than duplicated as a separate
+    /// constant, so this always matches whatever's actually set in XAML) by
+    /// PowerButtonCountdownFontStepDown once per extra digit in the hours portion, starting once it
+    /// reaches double digits (10h+ is one step down, 100h+ two steps) - PowerButtonMinimumCountdownFontSize
+    /// is set to exactly the 100h+ size, so shrinking effectively stops there: 1000h+, 10000h+, and beyond
+    /// all render at that same size rather than continuing to shrink. Returns null - "use the base/inherited
+    /// size" - whenever remaining is null or hours is still single-digit, so callers know to ClearValue
+    /// instead of assigning a redundant explicit size.
+    /// </summary>
+    private double? GetCountdownFontSize(TimeSpan? remaining)
+    {
+        if (remaining is not { } value)
+        {
+            return null;
+        }
+
+        var hours = (int)value.TotalHours;
+        if (hours < 10)
+        {
+            return null;
+        }
+
+        var digitCount = hours.ToString(CultureInfo.InvariantCulture).Length;
+        var tier = digitCount - 1;
+        var baseFontSize = PowerToggleButton.FontSize;
+        return Math.Max(baseFontSize - tier * PowerButtonCountdownFontStepDown, PowerButtonMinimumCountdownFontSize);
+    }
+
+    /// <summary>
+    /// Pushes a fresh color into PowerToggleAlternateNormalBrush/PointerOverBrush/PressedBrush - the three
+    /// named brushes shadowing ButtonBackground/ButtonBackgroundPointerOver/ButtonBackgroundPressed inside
+    /// PowerToggleAlternateButton's own Resources (see MainWindow.xaml's comment on that Button.Resources
+    /// block for the full mechanism). All three get the same color - GetAlternateButtonBackground doesn't
+    /// vary by pointer state (see its own doc comment) - but all three still need updating, since
+    /// DefaultButtonStyle's native CommonStates Storyboard picks whichever one currently matches the
+    /// button's real pointer state, and any of the three could be the one showing at a given moment.
+    /// Mutates each brush's existing Color in place - never replaces the brush object or ClearValues it -
+    /// so whichever one is currently showing keeps rendering, just repainted with the color this call just
+    /// gave it. Called from UpdateAlternateButtonDisplay every time the button's look needs to (re)apply -
+    /// e.g. a fresh pause, a fresh startup grace period, or a theme change.
+    /// </summary>
+    private void ApplyAlternateButtonBackgroundBrushes(AlternateButtonState state)
+    {
+        var background = GetAlternateButtonBackground(state);
+        PowerToggleAlternateNormalBrush.Color = background;
+        PowerToggleAlternatePointerOverBrush.Color = background;
+        PowerToggleAlternatePressedBrush.Color = background;
+    }
+
+    // ============================================================================================
+    // PowerToggleAlternateButton colorway - a translucent fill (GetAlternateButtonBackground) with tinted
+    // text shaded on top (GetAlternateButtonForeground). Starting is simplest: both methods read
+    // SuccessBrushSource's plain green, unadjusted. Paused is where they diverge: the background's base
+    // color itself differs by theme (raw SystemAccentColor in Light, AccentFillColorDefaultBrush's
+    // Windows-adjusted "brighter" Fill variant in Dark - see GetAlternateButtonBackground's own doc
+    // comment for why), while the foreground always swaps in its own separately-tuned live brush
+    // regardless of theme (AccentBrushSource's AccentTextFillColorPrimaryBrush) for legibility as text -
+    // deliberately never matching the background's base color exactly, since text and background need to
+    // stay visually distinct from each other, not collapse into the same shaded tone. SuccessBrushSource
+    // in particular has to be a live, already-theme-resolved FrameworkElement's Foreground rather than a
+    // raw Application.Current.Resources[] indexer lookup, since SystemFillColorSuccessBrush (unlike
+    // SystemAccentColor) is Light/Dark/HighContrast ThemeDictionary-scoped, and a flat lookup for a scoped
+    // key resolves against Application.RequestedTheme/ActualTheme, not RootGrid's own ActualTheme - these
+    // disagree once the in-app Theme setting overrides the OS default (this app only ever sets
+    // RootGrid.RequestedTheme, never Application.Current.RequestedTheme - see ApplyTheme). A real
+    // FrameworkElement's ActualTheme correctly inherits from RootGrid instead, so its already-resolved
+    // Foreground is always correct regardless of which theme Application itself thinks is active - the
+    // same reasoning DisabledBrushSource uses elsewhere (see its own shared XAML
+    // comment). Shading amounts (PausedButtonHoverLightenAmount/PausedButtonPressedDarkenAmount below -
+    // shared by both states despite the "Paused" name; see those constants' own comments) apply on top of
+    // the foreground's per-state base either way. An earlier "solid" colorway (a fully opaque fill, no
+    // text tint in Light theme, a flat dark tint in Dark theme) was tried first for the Paused state and
+    // replaced by this one - see git history on this branch if that's ever worth revisiting.
+    // ============================================================================================
+
+    /// <summary>
+    /// PowerToggleAlternateButton's translucent background - the state's own base color at real
+    /// PausedButtonBackgroundOpacity alpha, no opaque layer underneath at all. Starting always uses
+    /// SuccessBrushSource's plain green (see the colorway comment above). Paused differs by theme: Light
+    /// reads Application.Current.Resources["SystemAccentColor"] directly - pure, unadjusted accent, tried
+    /// and preferred by eye over the Windows-tuned "Fill" variant here (SystemAccentColor has no Light/Dark
+    /// ThemeDictionary scoping, confirmed by reading the installed WinUI SDK's generic.xaml directly, so a
+    /// flat Resources[] indexer lookup is reliable for it regardless of theme) - while Dark reads
+    /// AccentFillBrushSource.Foreground (ThemeResource AccentFillColorDefaultBrush), the same
+    /// Windows-adjusted "brighter" Fill-purposed shade tried for both themes at one point (see git history
+    /// on this branch), kept for Dark specifically once Light turned out to read better with the plain raw
+    /// color instead. Either way, this color never renders at full solid strength (see the translucency
+    /// below), and GetAlternateButtonForeground's text still needs its own, separately-tuned source
+    /// (AccentTextFillColorPrimaryBrush) to read well on top of it regardless of which background variant
+    /// is active - matching that text color exactly here was tried early on and didn't look good, since
+    /// text and background need to stay visually distinct from each other, not collapse into the same
+    /// shaded tone. This is genuine GPU alpha transparency, unlike a pre-blended-opaque trick tried earlier
+    /// (and unlike the even earlier PowerTogglePausedOverlay design, which had to fake translucency this
+    /// same way for a different reason) - both of those existed specifically because whatever sat behind
+    /// the color at render time used to be unpredictable: PowerTogglePausedOverlay literally sat on top of
+    /// PowerToggleButton's own real, hover/press-reactive accent background. That's no longer true -
+    /// PowerToggleAlternateButton is its own independent element (see MainWindow.xaml's comment on it), so
+    /// whatever's behind it at render time is just the plain window/Mica backdrop, not another element's
+    /// shifting color - real transparency is safe here now. No hover/pressed shading applied to the
+    /// background itself - it's the same translucent color regardless of pointer state, and doesn't vary
+    /// per-VisualState either (see ApplyAlternateButtonBackgroundBrushes, which pushes this same one color
+    /// into all three shadowed brushes) - that shading lives in the foreground instead (see
+    /// GetAlternateButtonForeground).
+    /// </summary>
+    private Color GetAlternateButtonBackground(AlternateButtonState state)
+    {
+        var tintedColor = state == AlternateButtonState.Paused
+            ? (RootGrid.ActualTheme == ElementTheme.Dark
+                ? ((SolidColorBrush)AccentFillBrushSource.Foreground).Color
+                : (Color)Application.Current.Resources["SystemAccentColor"])
+            : ((SolidColorBrush)SuccessBrushSource.Foreground).Color;
+        return Color.FromArgb((byte)Math.Round(255 * PausedButtonBackgroundOpacity), tintedColor.R, tintedColor.G, tintedColor.B);
+    }
+
+    /// <summary>
+    /// PowerToggleAlternateButton's icon/label Foreground, per state - both read a live, already-theme-
+    /// resolved FrameworkElement's Foreground directly (see the colorway comment above), the same shape
+    /// for both: Paused reads AccentBrushSource.Foreground (ThemeResource AccentTextFillColorPrimaryBrush)
+    /// - Windows' own accent-as-text shade (resolving to a lighter accent variant in Dark theme, a darker
+    /// one in Light theme), tuned by the system across any accent color to read well as text against the
+    /// translucent background (see GetAlternateButtonBackground), which the raw accent color at its
+    /// normal strength doesn't - rather than this app trying to reproduce that per-theme tuning with its
+    /// own math (a plain RGB Lighten, blend toward white, and later an HSL lightness-boost helper,
+    /// Vibrant, were both tried and dropped here - see git history on this branch). Starting reads
+    /// SuccessBrushSource.Foreground (ThemeResource SystemFillColorSuccessBrush) - the same green this app
+    /// already uses elsewhere for its "Success" status tone (see ApplyEngineStatus's StatusTone.Success) -
+    /// which already reads fine as text against the translucent fill as-is, in either theme, so no further
+    /// adjustment is needed there. Applied for EVERY state shown on this button while Paused ("Paused",
+    /// "Resuming in Xs", and hover-"Stop" alike - the "Stop" text deliberately does not get its own
+    /// distinct color, it matches the Paused state). Hover/press shading (Lighten/Darken - plain RGB
+    /// blends; small, brief interactive nudges, not the resting-state legibility fix above) is layered on
+    /// top of that per-state base either way - since the fill itself (see GetAlternateButtonBackground)
+    /// never shades, this is what makes hover/press feedback visible at all, for both states (even though
+    /// Starting never actually swaps its text to "Stop" on hover - see UpdateAlternateButtonDisplay - the
+    /// tactile lighten/darken still applies).
+    /// </summary>
+    private Color GetAlternateButtonForeground(AlternateButtonState state)
+    {
+        var textColor = state == AlternateButtonState.Paused
+            ? ((SolidColorBrush)AccentBrushSource.Foreground).Color
+            : ((SolidColorBrush)SuccessBrushSource.Foreground).Color;
+        return _isPowerButtonPressed
+            ? Darken(textColor, PausedButtonPressedDarkenAmount)
+            : _isPointerOverPowerButton
+                ? Lighten(textColor, PausedButtonHoverLightenAmount)
+                : textColor;
+    }
+
+    /// <summary>Blends `color` toward white by `amount` (0..1) - used for PowerToggleAlternateButton's hover shade.</summary>
+    private static Color Lighten(Color color, double amount) =>
+        Color.FromArgb(
+            color.A,
+            (byte)Math.Clamp(color.R + (255 - color.R) * amount, 0, 255),
+            (byte)Math.Clamp(color.G + (255 - color.G) * amount, 0, 255),
+            (byte)Math.Clamp(color.B + (255 - color.B) * amount, 0, 255));
+
+    /// <summary>Blends `color` toward black by `amount` (0..1) - used for PowerToggleAlternateButton's pressed shade.</summary>
+    private static Color Darken(Color color, double amount) =>
+        Color.FromArgb(
+            color.A,
+            (byte)Math.Clamp(color.R * (1 - amount), 0, 255),
+            (byte)Math.Clamp(color.G * (1 - amount), 0, 255),
+            (byte)Math.Clamp(color.B * (1 - amount), 0, 255));
+
+    /// <summary>
+    /// Standard "alpha-over" compositing formula, computed by hand and returned fully opaque (A=255) -
+    /// simulates translucency as a flat color instead of relying on real GPU alpha blending, for whenever
+    /// what's actually behind an element at render time is unpredictable (see MainWindow.xaml's comment on
+    /// PowerToggleAlternateButton for the real bug this solved once). Currently unused -
+    /// GetAlternateButtonBackground uses genuine alpha transparency instead, now that
+    /// PowerToggleAlternateButton is a wholly independent element with a stable, predictable backdrop
+    /// behind it - kept here in case a future need for this trick comes up again for some other
+    /// unpredictable-backdrop case.
+    /// </summary>
+    private static Color BlendOver(Color background, Color foreground, double foregroundOpacity) =>
+        Color.FromArgb(
+            255,
+            (byte)Math.Round(background.R * (1 - foregroundOpacity) + foreground.R * foregroundOpacity),
+            (byte)Math.Round(background.G * (1 - foregroundOpacity) + foreground.G * foregroundOpacity),
+            (byte)Math.Round(background.B * (1 - foregroundOpacity) + foreground.B * foregroundOpacity));
+
+    /// <summary>
     /// Formats a completed-action count as "{count} click"/"{count} clicks" (Click mode) or
-    /// "{count} spin"/"{count} spins" (Spin mode), singular only when count == 1.
+    /// "{count} jiggle"/"{count} jiggles" (Jiggle mode), singular only when count == 1.
     /// </summary>
     private static string FormatActionCount(int count, AutomationMode mode)
     {
-        var noun = mode == AutomationMode.Click ? "click" : "spin";
+        var noun = mode == AutomationMode.Click ? "click" : "jiggle";
         return count == 1 ? $"{count} {noun}" : $"{count} {noun}s";
     }
 
@@ -1424,13 +1963,150 @@ public sealed partial class MainWindow : Window
         SetStatusText("Off", StatusTone.Muted);
     }
 
-    // How long Spin mode's one-shot "Starting now" (StatusKind.SpinStarting) stays on screen before
+    // How long Jiggle mode's one-shot "Starting now" (StatusKind.JiggleStarting) stays on screen before
     // later status reports are allowed to overwrite it - purely cosmetic (so it doesn't flash by
     // faster than a human can read it), independent of MouseAutomationEngine's actual interval
-    // timer, which fires the next spin on its own schedule regardless of this hold.
-    private static readonly TimeSpan SpinStartingStatusHoldDuration = TimeSpan.FromMilliseconds(500);
+    // timer, which fires the next jiggle on its own schedule regardless of this hold.
+    private static readonly TimeSpan JiggleStartingStatusHoldDuration = TimeSpan.FromMilliseconds(500);
     private bool _statusHoldActive;
     private StatusChangedEventArgs? _pendingStatusAfterHold;
+
+    // How much PowerToggleAlternateButton's current per-state text color (see GetAlternateButtonForeground)
+    // is blended toward white/black for its hover/pressed shades (see Lighten/Darken) - gives
+    // PowerToggleAlternateButton the same three-tier tactile
+    // feedback the native accent PowerToggleButton already gets for free from
+    // Checked/CheckedPointerOver/CheckedPressed, for both its Paused and Starting states. Tuned by eye
+    // against the real button: light enough to read as a clearly different shade, not so strong it looks
+    // like a different hue.
+    private const double PausedButtonHoverLightenAmount = 0.12;
+    private const double PausedButtonPressedDarkenAmount = 0.18;
+
+    // GetCountdownFontSize's step size (points knocked off per extra hours digit) and floor. The floor is
+    // deliberately set to exactly the size the 100h+ tier (3 digits) already lands on - 18 - 2*2 - rather
+    // than a smaller legibility minimum, so the shrinking effectively stops at 100h+: that size read fine
+    // for every larger hour count tried, no reason to keep shrinking past it for 1000h/10000h/etc.
+    private const double PowerButtonCountdownFontStepDown = 2;
+    private const double PowerButtonMinimumCountdownFontSize = 14;
+
+    // Real alpha (0..1, fed straight into a Color's A channel) for GetAlternateButtonBackground, so the
+    // fill reads as a faint, translucent tint rather than a bold solid block, for both states. Same value
+    // both themes - a Dark-only 0.2 was tried early on and tuned back up to match, in favor of
+    // brightening the Dark-theme base color itself instead (this attempt predates the Starting state, and
+    // was reverted at the time; the idea was retried later, first as a hand-rolled HSL lightness boost,
+    // then as AccentFillColorDefaultBrush - kept for Dark theme specifically once Light turned out to read
+    // better with the plain raw accent color instead - see GetAlternateButtonBackground's own comment).
+    private const double PausedButtonBackgroundOpacity = 0.3;
+
+    // StartImminentBlinkIfNeeded's fade range/speed for PowerToggleLabel's opacity during the last 3
+    // seconds of a regular per-action countdown (StatusKind.Imminent). Duration is one direction of the
+    // AutoReverse fade (down, or back up), so a full dim-then-brighten cycle takes twice this - tuned to
+    // give roughly six full pulses across the 3-second Imminent window, brisk enough to read as an urgent
+    // "about to fire" cue rather than a lazy pulse. ImminentBlinkMinOpacity of 0.25 (not lower) keeps the
+    // countdown text still faintly legible mid-fade, never fully invisible.
+    private const double ImminentBlinkMinOpacity = 0.25;
+    private static readonly TimeSpan ImminentBlinkHalfCycleDuration = TimeSpan.FromSeconds(0.25);
+
+    // StartImminentBlinkIfNeeded suppresses the blink entirely (leaving the countdown text at a
+    // constant, unblinking full opacity) when _runningInterval is below this - on a short interval the
+    // 3-second Imminent window covers a large fraction of every single cycle, so the blink would be
+    // running almost constantly rather than reading as a distinct "about to fire" cue.
+    private static readonly TimeSpan ImminentBlinkMinimumInterval = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Which of PowerToggleButton/PowerToggleAlternateButton is currently shown, and - when it's the
+    /// latter - which of its two states it's showing: pause-on-movement (accent-colored) or
+    /// Click mode's 3-second startup grace period (green - see UpdateAlternateButtonDisplay), the latter
+    /// only while "Stop button display" is set to Countdown (see UpdatePowerButtonCountdownDisplay).
+    /// Replaces what used to be a plain bool (_isPausedButtonShowing) back when
+    /// PowerToggleAlternateButton had only one purpose - now that it represents two mutually-exclusive
+    /// states, a bool can no longer distinguish "hidden" from "which state is showing," hence the enum.
+    /// </summary>
+    private enum AlternateButtonState
+    {
+        Hidden,
+        Paused,
+        Starting
+    }
+
+    // Mirrors which of PowerToggleButton/PowerToggleAlternateButton ShowPowerButton last made the "shown"
+    // one (and which state, if PowerToggleAlternateButton) - kept as a plain field rather than
+    // re-checking .Visibility everywhere, mostly for readability.
+    private AlternateButtonState _alternateButtonState;
+
+    /// <summary>
+    /// Shows exactly one of PowerToggleButton/PowerToggleAlternateButton (Visibility.Visible) and hides the
+    /// other (Visibility.Collapsed) - the only place either element's shown/hidden state is ever touched.
+    /// (An Opacity/IsHitTestVisible-based version was also tried, to see if keeping both elements
+    /// permanently in the visual tree would fix the stop-while-paused accent flash - it didn't, see git
+    /// history on this branch.)
+    /// </summary>
+    private void ShowPowerButton(AlternateButtonState state)
+    {
+        _alternateButtonState = state;
+        PowerToggleButton.Visibility = state == AlternateButtonState.Hidden ? Visibility.Visible : Visibility.Collapsed;
+        PowerToggleAlternateButton.Visibility = state == AlternateButtonState.Hidden ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    // Non-null exactly while the Imminent blink (see StartImminentBlinkIfNeeded/StopImminentBlink) is
+    // actually running - lets StartImminentBlinkIfNeeded no-op on every call after the first instead of
+    // restarting the animation's phase on every ~100ms status tick, which would turn a smooth pulse into
+    // a stutter.
+    private Storyboard? _imminentBlinkStoryboard;
+
+    /// <summary>
+    /// Starts (once - see _imminentBlinkStoryboard) a repeating fade between full opacity and
+    /// ImminentBlinkMinOpacity on PowerToggleLabel, called only from UpdatePowerButtonCountdownDisplay's
+    /// live-countdown branch while the engine's last report is StatusKind.Imminent (the last 3 seconds of
+    /// a regular per-action countdown - never pause-on-movement or Click mode's startup grace,
+    /// which are StatusKind.Paused/StatusKind.Starting and handled entirely separately by
+    /// PowerToggleAlternateButton). Only touches Opacity, deliberately - unlike Background/Foreground,
+    /// PowerToggleButton's native ControlTemplate never animates that property via its own CommonStates
+    /// Storyboards, so this can't fight the native Checked-state rendering the way recoloring the button's
+    /// own background from code would (the exact problem PowerToggleAlternateButton
+    /// exists to route around entirely, for a different property).
+    ///
+    /// No-ops (leaving PowerToggleLabel at full, unblinking opacity) below ImminentBlinkMinimumInterval -
+    /// see that constant's own comment. This check lives here rather than at the call site so it's
+    /// impossible to start the blink from anywhere without it applying.
+    /// </summary>
+    private void StartImminentBlinkIfNeeded()
+    {
+        if (_imminentBlinkStoryboard is not null || _runningInterval < ImminentBlinkMinimumInterval)
+        {
+            return;
+        }
+
+        var fade = new DoubleAnimation
+        {
+            To = ImminentBlinkMinOpacity,
+            Duration = ImminentBlinkHalfCycleDuration,
+            AutoReverse = true
+        };
+        Storyboard.SetTarget(fade, PowerToggleLabel);
+        Storyboard.SetTargetProperty(fade, "Opacity");
+
+        var storyboard = new Storyboard { RepeatBehavior = RepeatBehavior.Forever };
+        storyboard.Children.Add(fade);
+        storyboard.Begin();
+        _imminentBlinkStoryboard = storyboard;
+    }
+
+    /// <summary>
+    /// Stops the Imminent blink (safe/idempotent - a no-op if it isn't currently running) and always
+    /// explicitly resets PowerToggleLabel.Opacity back to 1, since Storyboard.Stop() leaves the animated
+    /// property wherever the fade happened to be mid-cycle rather than snapping it back on its own.
+    /// Called from every branch that could otherwise leave a stale blink running under text it was never
+    /// meant to apply to: UpdatePowerButtonCountdownDisplay's Paused/hover/Starting-JiggleStarting branches
+    /// and its own live-countdown branch once the kind is no longer Imminent, UpdatePowerButtonRunningDisplay's
+    /// Counter-mode path and UpdatePowerButtonNoneDisplay (in case "Stop button display" is switched away
+    /// from Countdown mid-blink), and PowerToggleButton_Checked/_Unchecked as a fresh-run/stop safety net.
+    /// </summary>
+    private void StopImminentBlink()
+    {
+        _imminentBlinkStoryboard?.Stop();
+        _imminentBlinkStoryboard = null;
+        PowerToggleLabel.Opacity = 1;
+    }
 
     private void Engine_StatusChanged(object? sender, StatusChangedEventArgs e)
     {
@@ -1444,7 +2120,7 @@ public sealed partial class MainWindow : Window
 
             ApplyEngineStatus(e);
 
-            if (e.Kind == StatusKind.SpinStarting)
+            if (e.Kind == StatusKind.JiggleStarting)
             {
                 _statusHoldActive = true;
                 _pendingStatusAfterHold = null;
@@ -1455,7 +2131,7 @@ public sealed partial class MainWindow : Window
 
     private async Task ReleaseStatusHoldAfterDelayAsync()
     {
-        await Task.Delay(SpinStartingStatusHoldDuration);
+        await Task.Delay(JiggleStartingStatusHoldDuration);
 
         DispatcherQueue.TryEnqueue(() =>
         {
@@ -1470,8 +2146,8 @@ public sealed partial class MainWindow : Window
 
     private void ApplyEngineStatus(StatusChangedEventArgs e)
     {
-        // Guards against a race in the countdown-heavy paths (Click mode's startup grace, Spin
-        // mode's pause-on-movement resume countdown): the engine's background loop reports the
+        // Guards against a race in the countdown-heavy paths (Click mode's startup grace,
+        // pause-on-movement's resume countdown): the engine's background loop reports the
         // current tick (ReportStatus -> StatusChanged -> DispatcherQueue.TryEnqueue) and only then
         // awaits its next Task.Delay - so a Stop() that lands on the UI thread during that delay
         // (e.g. PowerToggleButton_Unchecked, fired here by the tray's "Stop" item just as easily as
@@ -1486,17 +2162,90 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        _lastEngineStatusKind = e.Kind;
+        _lastEngineStatusText = e.Text;
+        _lastEngineStatusRemaining = e.Remaining;
+
+        // StatusKind.Paused (Caution/yellow) and StatusKind.Imminent (Critical/red) only get their
+        // attention-grabbing tones when the status bar text is itself the countdown/pause indicator -
+        // that's Counter mode (always) and the toggle-off state (always, since the button never shows
+        // anything but plain "Stop" - see UpdatePowerButtonNoneDisplay - so the status bar is the ONLY
+        // place either state is visible at all). IsCountdownDisplayActive is the one exception: its Stop
+        // button already carries both of those cues itself (accent-colored background while paused - see
+        // GetAlternateButtonBackground - and live countdown text as an action nears - see
+        // UpdatePowerButtonCountdownDisplay), and the status bar there is instead just showing the running
+        // click/jiggle count (see GetStatusBarText) - a count has no "paused" or "about to fire" meaning of
+        // its own, so tinting it Caution/Critical there would be a redundant, confusing second indicator of
+        // the same state already shown on the button. It stays the regular Muted tone there for both, hence
+        // the guards below excluding only IsCountdownDisplayActive rather than requiring Counter/toggle-off
+        // specifically.
+        //
+        // StatusKind.Starting is the same story, one level down: while IsCountdownDisplayActive
+        // specifically, Click mode's 3-second startup grace now shows its own green countdown on
+        // PowerToggleAlternateButton (see UpdatePowerButtonCountdownDisplay/UpdateAlternateButtonDisplay)
+        // instead of the plain "Stop" it used to - the status bar's own copy of that same text (see
+        // GetStatusBarText) would be a literal duplicate, so it falls back to plain Muted "Off" there
+        // instead of Success/green. Every other case - and JiggleStarting always, since it has no on-button
+        // countdown of its own to hand this off to - keeps the original Success tone.
         var tone = e.Kind switch
         {
+            StatusKind.Starting when IsCountdownDisplayActive => StatusTone.Muted,
             StatusKind.Starting => StatusTone.Success,
-            StatusKind.SpinStarting => StatusTone.Success,
-            StatusKind.Imminent => StatusTone.Critical,
-            StatusKind.Paused => StatusTone.Caution,
+            StatusKind.JiggleStarting => StatusTone.Success,
+            StatusKind.Imminent when !IsCountdownDisplayActive => StatusTone.Critical,
+            StatusKind.Paused when !IsCountdownDisplayActive => StatusTone.Caution,
             _ => StatusTone.Muted
         };
-        SetStatusText(e.Text, tone);
+        SetStatusText(GetStatusBarText(e), tone);
         UpdateTaskbarProgress(e);
         _trayIconService.UpdateState(isRunning: true, isPaused: e.Kind == StatusKind.Paused, mode: _runningMode);
+        UpdatePowerButtonRunningDisplay();
+    }
+
+    /// <summary>
+    /// In Counter display mode, the status bar always shows the engine's own text verbatim - unchanged
+    /// from before Countdown mode existed. While IsCountdownDisplayActive, once the first action has
+    /// fired (_completedActionCount > 0 - before that, e.g. during the startup grace countdown, there's no
+    /// count yet, so this still falls back to the engine's own text, EXCEPT for Click mode's own startup
+    /// grace - see the _completedActionCount == 0 branch below), the status bar always shows just the
+    /// running click/jiggle count, e.g. "23 jiggles" - including throughout a pause. The pause-
+    /// resume countdown itself lives on the button instead once it becomes available (see
+    /// UpdatePowerButtonCountdownDisplay), not here, so there's no "...Resuming in Xs" suffix to build.
+    ///
+    /// IsCountdownDisplayActive's Click-mode startup grace (StatusKind.Starting) is a second, earlier
+    /// exception to the "count == 0 falls back to e.Text" rule: since PowerToggleAlternateButton now shows
+    /// this exact countdown itself (see UpdatePowerButtonCountdownDisplay/UpdateAlternateButtonDisplay),
+    /// repeating it on the status bar too would be a literal duplicate of the same timer in two places at
+    /// once - so this falls back to plain "Off" instead (see ApplyEngineStatus's matching Muted-tone
+    /// guard). Every other case, and JiggleStarting always (it has no on-button countdown of its own to
+    /// hand this off to), keeps showing e.Text as before.
+    ///
+    /// While ShowStopButtonDisplayToggle is off (PowerToggleButton always just shows plain "Stop" - see
+    /// UpdatePowerButtonNoneDisplay - so this is the ONLY place either the countdown or the count is ever
+    /// visible), once the first action has fired the status bar combines both on one line, separated by
+    /// " \u00B7 " (a space, U+00B7 MIDDLE DOT, a space) - e.g. "Jiggling in 3m 14s \u00B7 23 jiggles" or
+    /// "Resuming in 12s \u00B7 76 jiggles". The base phrase before the separator is e.Text verbatim for every
+    /// StatusKind except Paused: e.Text for a Paused report is phrased for Counter mode specifically (built
+    /// by the engine's own RunLoopAsync as "Paused... Resuming in Xs"), which would read as a redundant
+    /// "Paused... Resuming in 12s \u00B7 76 jiggles" here - GetPausedStatusPhrase (the same helper
+    /// UpdateAlternateButtonDisplay's on-button Paused text already uses) gives the clean "Resuming in
+    /// 12s"/"Paused" phrasing this state actually needs instead.
+    /// </summary>
+    private string GetStatusBarText(StatusChangedEventArgs e)
+    {
+        if (_completedActionCount == 0)
+        {
+            return e.Kind == StatusKind.Starting && IsCountdownDisplayActive
+                ? "Off"
+                : e.Text;
+        }
+
+        if (!_settingsPanel.IsStopButtonDisplayShown)
+        {
+            return $"{(e.Kind == StatusKind.Paused ? GetPausedStatusPhrase() : e.Text)} \u00B7 {FormatActionCount(_completedActionCount, _runningMode)}";
+        }
+
+        return IsCountdownDisplayActive ? FormatActionCount(_completedActionCount, _runningMode) : e.Text;
     }
 
     /// <summary>
@@ -1539,141 +2288,91 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Single click-handling surface for the Auto click / Spin mode switch: flips the selected mode
-    /// as one cohesive unit (rather than two independent mutually-exclusive ToggleButtons), refreshes
-    /// all visual indicators, and persists the choice so the app reopens in the same mode next launch.
+    /// Single handling point for the Auto click / Jiggle mode switch's actual selection: fires whenever
+    /// ModeSegmentedControl's selection changes, whether that's the user tapping a segment directly or
+    /// SetSelectedMode forcing one programmatically (see that method - used by the tray context menu's
+    /// "Start Auto Click"/"Start Jiggle" items, which need to force one specific mode rather than
+    /// toggle it). Skips everything below while _isSyncingModeSelection is set (see that field's own
+    /// comment), so UpdateModeIndicators' one-way visual sync of SelectedIndex from _isJiggleModeSelected
+    /// never replays these side effects for a selection change that didn't actually originate from the
+    /// user or the tray.
+    ///
+    /// Updates _isJiggleModeSelected - the real source of truth the rest of the app reads via
+    /// CurrentSelectedMode - plays whichever icon's wiggle/spin animation just became selected, resets
+    /// the status text back to Off if the engine isn't already running, refreshes the auto-stop
+    /// button's "after N clicks/jiggles" label (which must track whichever mode is now selected, even if
+    /// the user never reopens AutoStopDialog after switching), persists the choice as LastMode so the
+    /// app reopens in the same mode next launch, and keeps the tray tooltip's mode name live even while
+    /// inactive (mode selection can change with no Start/Stop in between - see TrayIconService.
+    /// UpdateState's other call sites). Finishes with a call to UpdateModeIndicators() - SelectedIndex
+    /// is already correct at this point, so that call's own sync is a no-op here; it exists so every
+    /// path that can change _isJiggleModeSelected runs through the same one refresh point.
     /// </summary>
-    private void ModeSwitchButton_Click(object sender, RoutedEventArgs e)
+    private void ModeSegmentedControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        SetSelectedMode(_isSpinModeSelected ? AutomationMode.Click : AutomationMode.Spin);
+        if (_isSyncingModeSelection)
+        {
+            return;
+        }
+
+        _isJiggleModeSelected = ModeSegmentedControl.SelectedIndex == 1;
+
+        (_isJiggleModeSelected ? JiggleModeIconWiggleStoryboard : ClickModeIconWiggleStoryboard).Begin();
+        ResetStatusToOffIfNotRunning();
+        UpdateAutoStopButtonLabel();
+        ConfigService.Update(c => c.LastMode = _isJiggleModeSelected ? "Jiggle" : "Click");
+        _trayIconService.UpdateState(isRunning: _engine.IsRunning, isPaused: false, mode: CurrentSelectedMode);
+
+        UpdateModeIndicators();
     }
 
     /// <summary>
-    /// Sets the selected Auto Click/Spin mode to a specific value, as opposed to
-    /// ModeSwitchButton_Click's "flip to whichever mode isn't currently selected" - shared by that
-    /// click handler above and by the tray context menu's "Start Auto Click"/"Start Spin Mode" items
-    /// (see TrayIconService_StartRequested), which need to force one specific mode rather than toggle
-    /// it. No-ops if the requested mode is already selected, so a tray-driven start in the mode that's
-    /// already selected doesn't replay the switch animation/effects for nothing.
+    /// Sets the selected Auto Click/Jiggle mode to a specific value, as opposed to a direct segment tap
+    /// (which sets ModeSegmentedControl.SelectedIndex itself, straight from the control) - shared by
+    /// the tray context menu's "Start Auto Click"/"Start Jiggle" items (see
+    /// TrayIconService_StartRequested), which need to force one specific mode rather than toggle it.
+    /// No-ops if the requested mode is already selected, so a tray-driven start in the mode that's
+    /// already selected doesn't replay the switch animation/effects for nothing. Setting SelectedIndex
+    /// here fires ModeSegmentedControl_SelectionChanged for real (as opposed to UpdateModeIndicators'
+    /// guarded sync) - that handler is the single place the actual mode-switch side effects live, so a
+    /// tray-triggered change and a direct segment tap end up running identical logic with nothing
+    /// duplicated between the two entry points.
     /// </summary>
     private void SetSelectedMode(AutomationMode mode)
     {
-        var isSpin = mode == AutomationMode.Spin;
-        if (_isSpinModeSelected == isSpin)
+        var isJiggle = mode == AutomationMode.Jiggle;
+        if (_isJiggleModeSelected == isJiggle)
         {
             return;
         }
 
-        _isSpinModeSelected = isSpin;
-        UpdateModeIndicators();
-        (_isSpinModeSelected ? SpinModePopStoryboard : ClickModePopStoryboard).Begin();
-        (_isSpinModeSelected ? SpinModeIconSpinStoryboard : ClickModeIconWiggleStoryboard).Begin();
-        ResetStatusToOffIfNotRunning();
-
-        // "After N clicks/spins" (see UpdateAutoStopButtonLabel) must track whichever mode is now
-        // selected, even if the user never reopens AutoStopDialog after switching modes.
-        UpdateAutoStopButtonLabel();
-
-        ConfigService.Update(c => c.LastMode = _isSpinModeSelected ? "Spin" : "Click");
-
-        // Keeps the tray tooltip's mode name live even while inactive, since the mode selection can
-        // change with no Start/Stop in between (see TrayIconService.UpdateState's other call sites).
-        _trayIconService.UpdateState(isRunning: _engine.IsRunning, isPaused: false, mode: mode);
+        ModeSegmentedControl.SelectedIndex = isJiggle ? 1 : 0;
     }
 
-    private static readonly Thickness NoModeBoxBorder = new(0);
-    private static readonly Thickness SelectedModeBoxBorder = new(1.5);
-    private const double SelectedModeBoxBackgroundOpacity = 0.20;
-    private const double DisabledModeBoxBorderOpacity = 0.5;
-    private const double UnselectedModeIconRunningOpacity = 0.5;
-
     /// <summary>
-    /// Updates everything that reflects the current click/spin mode selection: the accent-colored
-    /// border outline around whichever box is selected (see ApplySelectedModeBoxStyle for the
-    /// selected box's border/background, which also depends on whether the engine is running). The
-    /// unselected box gets BorderThickness=0 so it renders with no border at all (not just a
-    /// transparent-brush border occupying space). Also updates the two mode-icon colors (accent vs.
-    /// muted) and their opacity - the unselected icon dims to UnselectedModeIconRunningOpacity while
-    /// the engine is running (full opacity otherwise), matching the selected box's border dimming to
-    /// reinforce that the whole selector is temporarily inactive; the selected icon's opacity is
-    /// never touched - plus the title bar subtitle text and the switch's accessible name.
+    /// Syncs ModeSegmentedControl's selection to _isJiggleModeSelected - the one piece of UI that still
+    /// needs a manual refresh now that Segmented handles its own selected/unselected/disabled visuals
+    /// natively (unlike the old ModeSwitchButton's hand-rolled box coloring, which this used to also
+    /// drive - see ApplySelectedModeBoxStyle in git history on this branch if that's ever worth
+    /// revisiting; a title bar subtitle used to be synced here too, removed along with
+    /// ModeSubtitleTextBlock - see AppTitleBarGrid's own comment in MainWindow.xaml). The SelectedIndex
+    /// assignment is wrapped in _isSyncingModeSelection so it never replays
+    /// ModeSegmentedControl_SelectionChanged's side effects (icon animation, status/auto-stop refresh,
+    /// persistence, tray update) for what's just a one-way visual sync, not an actual user- or
+    /// tray-driven mode change - see that field's own comment.
     /// </summary>
     private void UpdateModeIndicators()
     {
-        var accent = AccentBrushSource.Foreground;
-
-        ClickModeIcon.Foreground = _isSpinModeSelected ? MutedBrushSource.Foreground : accent;
-        SpinModeIcon.Foreground = _isSpinModeSelected ? accent : MutedBrushSource.Foreground;
-
-        ClickModeIcon.Opacity = _isSpinModeSelected && _engine.IsRunning ? UnselectedModeIconRunningOpacity : 1;
-        SpinModeIcon.Opacity = !_isSpinModeSelected && _engine.IsRunning ? UnselectedModeIconRunningOpacity : 1;
-
-        ClickModeBox.BorderThickness = _isSpinModeSelected ? NoModeBoxBorder : SelectedModeBoxBorder;
-        SpinModeBox.BorderThickness = _isSpinModeSelected ? SelectedModeBoxBorder : NoModeBoxBorder;
-
-        ApplySelectedModeBoxStyle(ClickModeBox, isSelected: !_isSpinModeSelected, accent);
-        ApplySelectedModeBoxStyle(SpinModeBox, isSelected: _isSpinModeSelected, accent);
-
-        // Leaves the subtitle alone while Settings is the active/transitioning-to screen (see
-        // ShowSettingsOverlay, which sets it to "Settings") - otherwise a mode change triggered while
-        // Settings is open (e.g. the tray menu's "Start Auto Click"/"Start Spin Mode", via
-        // SetSelectedMode) would stomp it back to the mode name despite Settings still being what's
-        // actually on screen. SettingsOverlay stays Visible for the whole time Settings is open or
-        // mid-transition either way (see AnimatePanelTransition), only going Collapsed once fully back
-        // on the main screen, so this check covers both states correctly.
-        if (SettingsOverlay.Visibility != Visibility.Visible)
-        {
-            ModeSubtitleTextBlock.Text = _isSpinModeSelected ? "Spin mode" : "Auto click";
-        }
-
-        AutomationProperties.SetName(
-            ModeSwitchButton,
-            _isSpinModeSelected ? "Mode switch, Spin mode selected" : "Mode switch, Click mode selected");
-    }
-
-    /// <summary>
-    /// Sets a mode box's border and background for its selected/unselected state, additionally
-    /// dimming down to a disabled look while the engine is running:
-    ///
-    /// - Unselected: no border, no background (unchanged either way).
-    /// - Selected + idle: accent-colored border (unchanged from before) plus a same-colored
-    ///   background at SelectedModeBoxBackgroundOpacity, so the selection reads as a filled chip
-    ///   instead of just an outline.
-    /// - Selected + running: border switches to DisabledBrushSource's grayscale color at
-    ///   DisabledModeBoxBorderOpacity, and the background is removed entirely. The mode selector is
-    ///   already IsEnabled=false while running (see SetInputsEnabled) - this is purely the visual
-    ///   reinforcement of that disabled state. The icon's color (set by the caller) is untouched.
-    /// </summary>
-    private void ApplySelectedModeBoxStyle(Border box, bool isSelected, Brush accent)
-    {
-        var transparent = new SolidColorBrush(Colors.Transparent);
-
-        if (!isSelected)
-        {
-            box.BorderBrush = transparent;
-            box.Background = transparent;
-            return;
-        }
-
-        if (_engine.IsRunning)
-        {
-            var disabledColor = ((SolidColorBrush)DisabledBrushSource.Foreground).Color;
-            box.BorderBrush = new SolidColorBrush(disabledColor) { Opacity = DisabledModeBoxBorderOpacity };
-            box.Background = transparent;
-        }
-        else
-        {
-            box.BorderBrush = accent;
-            var accentColor = ((SolidColorBrush)accent).Color;
-            box.Background = new SolidColorBrush(accentColor) { Opacity = SelectedModeBoxBackgroundOpacity };
-        }
+        _isSyncingModeSelection = true;
+        ModeSegmentedControl.SelectedIndex = _isJiggleModeSelected ? 1 : 0;
+        _isSyncingModeSelection = false;
     }
 
     /// <summary>
     /// Syncs _isRandomizeIntervalEnabled from RandomizeIntervalButton.IsChecked (the real source of
     /// truth now that this is a ToggleButton) and refreshes the button's own indicator.
     /// RandomizeIntervalButton is locked (IsEnabled=false) via SetInputsEnabled while automation is
-    /// running, same as MinutesBox/SecondsBox/ModeSwitchButton - so this can only ever fire while
+    /// running, same as MinutesBox/SecondsBox/ModeSegmentedControl - so this can only ever fire while
     /// idle, and the setting can't change out from under an in-progress run.
     /// </summary>
     private void RandomizeIntervalButton_CheckedChanged(object sender, RoutedEventArgs e)
@@ -1684,41 +2383,42 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// Sets RandomizeIntervalIcon's Foreground and Opacity to match _isRandomizeIntervalEnabled and
-    /// RandomizeIntervalButton.IsEnabled - always explicit local values, never left to inherit from
-    /// the ContentPresenter (whose Foreground the default ToggleButton ControlTemplate re-targets to
-    /// ToggleButtonForegroundChecked while Checked) and never ClearValue'd.
+    /// RandomizeIntervalButton.IsEnabled. Foreground is an explicit local value for three of the four
+    /// states - otherwise it'd be left to inherit from the ContentPresenter, whose Foreground the
+    /// default ToggleButton ControlTemplate re-targets per VisualState - but Checked AND locked is a
+    /// deliberate exception: see that state's own bullet below for why it's ClearValue'd instead, the
+    /// only state left with no customization on the icon at all (the button's border is the sole
+    /// remaining customization for that state - see MainWindow.xaml's comment on
+    /// ToggleButtonBorderBrushCheckedDisabled).
     ///
-    /// Three states:
+    /// Four states:
     ///   - Idle (Unchecked, unlocked): Foreground = PrimaryBrushSource (TextFillColorPrimaryBrush,
     ///     matching IntervalCaptionTextBlock's own undimmed base color - white in Dark theme, black in
-    ///     Light theme), Opacity = 1. Needs to stay clearly brighter than the "INTERVAL" caption
+    ///     Light theme), Opacity = 0.8. Needs to stay clearly brighter than the "INTERVAL" caption
     ///     beside it (IntervalCaptionTextBlock, which sits at a constant Opacity = 0.6 - see
     ///     IntervalCaptionLabelStyle) so the icon still visibly reads as an interactive button/toggle,
     ///     not a plain label.
     ///   - Checked AND unlocked (sitting on the accent-filled pill): Foreground = OnAccentBrushSource
     ///     (TextOnAccentFillColorPrimaryBrush - the same brush the template itself uses for
     ///     ToggleButtonForegroundChecked: black in Dark theme, white in Light theme), Opacity = 1.
-    ///     This is the only state where the icon actually sits on a filled accent background, so it's
-    ///     the only state that needs the accent-contrast color.
-    ///   - Locked (automation running), regardless of Checked state: Foreground = DisabledBrushSource
-    ///     (TextFillColorDisabledBrush), Opacity = 0.6 - the exact same Foreground/Opacity combination
-    ///     IntervalCaptionLabelStyle's own Disabled VisualState uses for the "INTERVAL" caption beside
-    ///     it. Deliberately identical regardless of Checked state - this used to differ (Locked+Checked
-    ///     stayed at PrimaryBrushSource/0.5, brighter than Locked+Unchecked's DisabledBrushSource/0.6),
-    ///     on the theory that the brighter look helped signal "still on while locked". That backfired
-    ///     once a second button that briefly existed here (AdvancedIntervalDisplayButton, styled
-    ///     identically, since removed - see SettingsPanel's "Display advanced interval" toggle
-    ///     instead) could sit right next to this one in a different Checked state while both were
-    ///     locked at once: whichever one happened to be Checked rendered visibly brighter than the
-    ///     other for no reason a user could infer, since both are simply "locked, nothing you can do
-    ///     about it right now" - confirmed via side-by-side pixel-contrast comparison in both themes at
-    ///     the time, and the fix stayed even after that button did not. RandomizeIntervalButton's own outline
-    ///     (ToggleButtonBorderBrushCheckedDisabled, present only in the Locked+Checked case) is what
-    ///     communicates on/off while locked here, not the icon - keeping OnAccentBrushSource would also
-    ///     be wrong regardless, since the pill background goes Transparent once locked (see
-    ///     ToggleButtonBackgroundCheckedDisabled in RandomizeIntervalButton.Resources), and that brush's
-    ///     accent-contrast color would render close to invisible against the app's own background
-    ///     instead.
+    ///     This is the state where the icon sits on the fully-opaque, unlocked accent-filled pill, so
+    ///     it gets the accent-contrast color at full opacity.
+    ///   - Checked AND locked (automation running with randomize-interval On): Foreground is
+    ///     ClearValue'd (not assigned at all), Opacity = 1. RandomizeIntervalButton.Resources no longer
+    ///     overrides ToggleButtonBackgroundCheckedDisabled (see MainWindow.xaml) - Checked+Disabled's
+    ///     fill is the plain default ToggleButtonStyle look now, and the default ControlTemplate's own
+    ///     CheckedDisabled VisualState already re-targets ContentPresenter.Foreground to
+    ///     ToggleButtonForegroundCheckedDisabled to match that exact fill - so clearing the icon's local
+    ///     Foreground lets it inherit that already-correct default instead of this method re-deriving
+    ///     its own color choice for a state it no longer customizes the fill of. Only
+    ///     ToggleButtonBorderBrushCheckedDisabled stays a deliberate customization for this state
+    ///     (unrelated to icon Foreground/Opacity, both left at default/undimmed here).
+    ///   - Unchecked AND locked: Foreground = DisabledBrushSource (TextFillColorDisabledBrush),
+    ///     Opacity = 0.6 - the exact same Foreground/Opacity combination IntervalCaptionLabelStyle's
+    ///     own Disabled VisualState uses for the "INTERVAL" caption beside it. This state's chrome
+    ///     stays fully Transparent (ToggleButtonBackgroundDisabled/ToggleButtonBorderBrushDisabled in
+    ///     RandomizeIntervalButton.Resources), so there's no filled pill for an accent-contrast color
+    ///     to sit on, and the icon instead dims to match the caption's own disabled look.
     ///
     /// Also updates the button's AutomationProperties.Name/ToolTip so screen readers and tooltips
     /// announce the current state, not just "Randomize interval" with no indication of on/off.
@@ -1727,13 +2427,21 @@ public sealed partial class MainWindow : Window
     {
         bool isLocked = !RandomizeIntervalButton.IsEnabled;
         bool isCheckedAndUnlocked = !isLocked && _isRandomizeIntervalEnabled;
+        bool isCheckedAndLocked = isLocked && _isRandomizeIntervalEnabled;
 
-        RandomizeIntervalIcon.Foreground = isCheckedAndUnlocked
-            ? OnAccentBrushSource.Foreground
-            : isLocked
-                ? DisabledBrushSource.Foreground
-                : PrimaryBrushSource.Foreground;
-        RandomizeIntervalIcon.Opacity = isCheckedAndUnlocked ? 1 : isLocked ? 0.6 : 0.8;
+        if (isCheckedAndLocked)
+        {
+            RandomizeIntervalIcon.ClearValue(FontIcon.ForegroundProperty);
+        }
+        else
+        {
+            RandomizeIntervalIcon.Foreground = isCheckedAndUnlocked
+                ? OnAccentBrushSource.Foreground
+                : isLocked
+                    ? DisabledBrushSource.Foreground
+                    : PrimaryBrushSource.Foreground;
+        }
+        RandomizeIntervalIcon.Opacity = isCheckedAndUnlocked || isCheckedAndLocked ? 1 : isLocked ? 0.6 : 0.8;
 
         AutomationProperties.SetName(
             RandomizeIntervalButton,
@@ -1744,8 +2452,8 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Applies _settingsPanel.ShowAdvancedIntervalDisplay - SettingsPanel's own persisted "Display
-    /// advanced interval" toggle, the sole source of truth now that AdvancedIntervalDisplayButton
+    /// Applies _settingsPanel.ShowAdvancedIntervalDisplay - SettingsPanel's own persisted "Interval
+    /// display" dropdown, the sole source of truth now that AdvancedIntervalDisplayButton
     /// has been removed from the main window entirely (see the header row's own comment in
     /// MainWindow.xaml) - by syncing _isAdvancedIntervalDisplayEnabled, swapping
     /// BasicIntervalRow/AdvancedIntervalRow's Visibility, and - only when switching TO Advanced -
@@ -1757,7 +2465,7 @@ public sealed partial class MainWindow : Window
     ///
     /// Called once at startup from LoadConfigIntoUi (after MinutesBox/SecondsBox are loaded) and again
     /// every time SettingsPanel.ShowAdvancedIntervalDisplayChanged fires. Persistence itself already
-    /// happens in SettingsPanel.ShowAdvancedIntervalDisplayToggle_Toggled, so this method doesn't
+    /// happens in SettingsPanel.IntervalDisplayRadioButton_Checked, so this method doesn't
     /// duplicate it - unlike the old AdvancedIntervalDisplayButton_CheckedChanged this replaces, there's
     /// no second UI control left to keep in sync with, so no _isInitializing guard is needed either.
     /// </summary>
@@ -1861,7 +2569,7 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// Restricts one NumberBox's inner InputBox to digits 0-9 as characters are actually typed - used
-    /// for all six interval fields plus AutoStopCountBox (the "clicks/spins" count field in
+    /// for all six interval fields plus AutoStopCountBox (the "clicks/jiggles" count field in
     /// AutoStopDialog) - and, only when allowDecimalPoint is true (SecondsBox alone, the one field of
     /// the six interval ones that supports fractional values - see BasicIntervalRow's own XAML
     /// comment), a single '.'. NumberBox's
@@ -2374,9 +3082,9 @@ public sealed partial class MainWindow : Window
         });
     }
 
-    private void AutoStopCheckBox_CheckedChanged(object sender, RoutedEventArgs e)
+    private void AutoStopToggle_Toggled(object sender, RoutedEventArgs e)
     {
-        SetStopControlsEnabled(AutoStopCheckBox.IsChecked == true);
+        SetStopControlsEnabled(AutoStopToggle.IsOn);
         ResetStatusToOffIfNotRunning();
     }
 
@@ -2492,20 +3200,20 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Sets AutoStopCountBox's Header to "clicks" or "spins" to match whichever Auto Click/Spin Mode
+    /// Sets AutoStopCountBox's Header to "clicks" or "jiggles" to match whichever Auto Click/Jiggle Mode
     /// is currently selected on the main window - called only when AutoStopDialog is about to open,
-    /// since ModeSwitchButton is unreachable (the dialog is modal) while it's already showing.
+    /// since ModeSegmentedControl is unreachable (the dialog is modal) while it's already showing.
     /// </summary>
     private void UpdateAutoStopCountBoxHeader()
     {
-        AutoStopCountBox.Header = _isSpinModeSelected ? "spins" : "clicks";
+        AutoStopCountBox.Header = _isJiggleModeSelected ? "jiggles" : "clicks";
     }
 
     /// <summary>
     /// Refreshes AutoStopButtonLabel.Text and AutoStopIcon.Symbol to reflect whichever Auto Stop mode
     /// is currently committed (_autoStopMode) - the "Configure" placeholder if never configured,
     /// FormatAutoStopDateTime's relative-day summary for DateTime mode (Calendar icon), or "After N
-    /// click(s)/spin(s)" - reusing FormatActionCount, the same helper the running power-button counter
+    /// click(s)/jiggle(s)" - reusing FormatActionCount, the same helper the running power-button counter
     /// uses, so the wording matches exactly - for Count mode (Refresh icon).
     /// </summary>
     private void UpdateAutoStopButtonLabel()
@@ -2513,7 +3221,7 @@ public sealed partial class MainWindow : Window
         switch (_autoStopMode)
         {
             case AutoStopMode.Count:
-                var mode = _isSpinModeSelected ? AutomationMode.Spin : AutomationMode.Click;
+                var mode = _isJiggleModeSelected ? AutomationMode.Jiggle : AutomationMode.Click;
                 AutoStopButtonLabel.Text = $"After {FormatActionCount(_autoStopCount, mode)}";
                 AutoStopIcon.Glyph = "\uEF3B"; //Replay
                 break;
@@ -2529,10 +3237,11 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// "Yesterday  HH:mm"/"Today  HH:mm"/"Tomorrow  HH:mm" when value's date is within a day of today,
-    /// falling back to the previous "yyyy-MM-dd  HH:mm" absolute format otherwise - kept correct across
-    /// a day boundary by ScheduleNextMidnightRefresh re-calling UpdateAutoStopButtonLabel at midnight,
-    /// since "today"/"tomorrow" is only ever true relative to whenever this happens to be evaluated.
+    /// "Yesterday \u00B7 HH:mm"/"Today \u00B7 HH:mm"/"Tomorrow \u00B7 HH:mm" when value's date is
+    /// within a day of today, falling back to the previous "yyyy-MM-dd \u00B7 HH:mm" absolute format
+    /// otherwise - kept correct across a day boundary by ScheduleNextMidnightRefresh re-calling
+    /// UpdateAutoStopButtonLabel at midnight, since "today"/"tomorrow" is only ever true relative to
+    /// whenever this happens to be evaluated.
     /// </summary>
     private static string FormatAutoStopDateTime(DateTime value)
     {
@@ -2543,7 +3252,7 @@ public sealed partial class MainWindow : Window
             1 => "Tomorrow",
             _ => value.ToString("yyyy-MM-dd")
         };
-        return $"{dayLabel}  {value:HH:mm}";
+        return $"{dayLabel} \u00B7 {value:HH:mm}";
     }
 
     /// <summary>

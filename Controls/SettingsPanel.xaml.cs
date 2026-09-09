@@ -4,10 +4,18 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using MouseUtil.Interop;
 using MouseUtil.Services;
+using Windows.ApplicationModel;
 using Windows.System;
 using Windows.UI.Core;
 
 namespace MouseUtil.Controls;
+
+/// <summary>Which of PowerToggleButton's two live-running displays is active while ShowStopButtonDisplayToggle is on - see SettingsPanel's "Stop button display" dropdown and MainWindow.UpdatePowerButtonRunningDisplay.</summary>
+public enum StopButtonDisplayMode
+{
+    Counter,
+    Countdown
+}
 
 /// <summary>
 /// The settings rows shown in MainWindow's Settings overlay (see MainWindow.xaml's SettingsOverlay
@@ -22,11 +30,6 @@ namespace MouseUtil.Controls;
 /// </summary>
 public sealed partial class SettingsPanel : UserControl
 {
-    // Matches UpdateButtonIcon's XAML-declared default exactly, so ApplyPendingUpdate(null) can
-    // restore it explicitly (Glyph has no ambient/inherited fallback the way Style does).
-    private const string UpdateButtonCheckGlyph = "\uE72C";
-    private const string UpdateButtonAvailableGlyph = "\uE896";
-
     /// <summary>Raised (guarded by _isInitializing) whenever the Theme selection changes, so MainWindow can run ApplyTheme.</summary>
     public event EventHandler<string>? ThemeSelectionChanged;
 
@@ -36,17 +39,14 @@ public sealed partial class SettingsPanel : UserControl
     /// <summary>Raised whenever "Show countdown progress on taskbar icon" changes, so MainWindow can refresh its own _showTaskbarProgress mirror and clear the taskbar progress bar if it was just turned off.</summary>
     public event EventHandler? ShowTaskbarProgressChanged;
 
-    /// <summary>Raised whenever "Pause spinning on movement" changes (by the user or via TogglePauseOnMovement), so MainWindow can call ResetStatusToOffIfNotRunning.</summary>
+    /// <summary>Raised whenever "Pause on movement" changes - the master toggle, or either "Auto click"/"Jiggle" sub-toggle (by the user or via TogglePauseOnMovement) - so MainWindow can call ResetStatusToOffIfNotRunning.</summary>
     public event EventHandler? PauseOnMovementChanged;
 
-    /// <summary>Raised whenever "Show click/spin counter" changes, so MainWindow can refresh PowerToggleButton's live display.</summary>
-    public event EventHandler? ShowActionCounterChanged;
+    /// <summary>Raised whenever "Stop button display" changes, so MainWindow can refresh PowerToggleButton's live display.</summary>
+    public event EventHandler? StopButtonDisplayChanged;
 
-    /// <summary>Raised whenever "Display advanced interval" changes, so MainWindow can swap BasicIntervalRow/AdvancedIntervalRow to match (see MainWindow.UpdateAdvancedIntervalDisplayMode).</summary>
+    /// <summary>Raised whenever "Interval display" changes, so MainWindow can swap BasicIntervalRow/AdvancedIntervalRow to match (see MainWindow.UpdateAdvancedIntervalDisplayMode).</summary>
     public event EventHandler? ShowAdvancedIntervalDisplayChanged;
-
-    /// <summary>Raised once an update has been downloaded and the installer launched, so MainWindow can close itself via its own _isClosingConfirmed/Close() pattern.</summary>
-    public event EventHandler? CloseAppRequested;
 
     /// <summary>
     /// MainWindow supplies this so hotkey recording can still go through its GlobalHotkeyService
@@ -62,43 +62,37 @@ public sealed partial class SettingsPanel : UserControl
     /// </summary>
     public Action? UnregisterHotkey { get; set; }
 
-    /// <summary>
-    /// MainWindow supplies its own single UpdateService instance here, rather than this control
-    /// creating a private one - shared with MainWindow's own launch-time auto-check (see
-    /// MainWindow.InitializeAutoUpdateCheck) so both surfaces reuse the same HttpClient instead of
-    /// each hitting GitHub Releases separately. The two deliberately do NOT share UI state, though:
-    /// UpdateButton below always starts idle regardless of what MainWindow's auto-check found - only
-    /// MainWindow's own accent-colored icon reacts to that result. Always set by MainWindow right
-    /// after construction (see InitializeSettingsPanel), so the null-forgiving operator at each call
-    /// site below is safe.
-    /// </summary>
-    public UpdateService? UpdateChecker { get; set; }
+    public StopButtonDisplayMode StopButtonDisplay =>
+        StopButtonDisplayCounterRadioButton.IsChecked == true
+            ? StopButtonDisplayMode.Counter
+            : StopButtonDisplayMode.Countdown;
 
-    public bool PauseOnMovement => PauseOnMovementToggle.IsOn;
-    public bool ShowActionCounter => ShowActionCounterToggle.IsOn;
+    /// <summary>Whether PowerToggleButton shows anything beyond plain "Stop" while running at all - see AppConfig.ShowStopButtonDisplay's own comment.</summary>
+    public bool IsStopButtonDisplayShown => ShowStopButtonDisplayToggle.IsOn;
+
     public bool CloseToTray => CloseToTrayToggle.IsOn;
     public bool ShowTaskbarProgress => ShowTaskbarProgressToggle.IsOn;
-    public bool ShowAdvancedIntervalDisplay => ShowAdvancedIntervalDisplayToggle.IsOn;
+
+    public bool ShowAdvancedIntervalDisplay => IntervalDisplayAdvancedRadioButton.IsChecked == true;
+
+    public bool RunAutomationOnLaunch => RunAutomationOnLaunchToggle.IsOn;
+    public bool RandomizeIntervalOnLaunch => RandomizeIntervalOnLaunchToggle.IsOn;
+
+    /// <summary>"LastUsed", "Click", or "Jiggle" - see AppConfig.PreferredMode's own comment. Backed by a plain field (rather than read back from PreferredModeDropDownButton) since DropDownButton/MenuFlyoutItem have no built-in "currently selected item" concept the way ComboBox does.</summary>
+    public string PreferredMode => _preferredMode;
 
     private bool _isInitializing;
     private uint _hotkeyModifiers;
     private uint _hotkeyKey;
     private bool _isRecordingHotkey;
-
-    private UpdateCheckResult? _pendingUpdate;
-
-    // Delayed-dismiss grace period for a found-but-not-installed update - see HandleHostClosing. Null
-    // whenever nothing is pending or no grace period is running; started once (never restarted) by
-    // the first HandleHostClosing call after a check finds an update, so reopening/reclosing Settings
-    // during the 15 minutes doesn't push the deadline back. Purely in-memory (like _pendingUpdate
-    // itself), so quitting the app clears it with no extra code needed.
-    private DispatcherTimer? _pendingUpdateDismissTimer;
+    private string _preferredMode = "LastUsed";
 
     public SettingsPanel()
     {
         InitializeComponent();
 
         LoadFromConfig();
+        _ = LoadStartupTaskStateAsync();
     }
 
     private void LoadFromConfig()
@@ -108,39 +102,149 @@ public sealed partial class SettingsPanel : UserControl
         var config = ConfigService.Load();
 
         PauseOnMovementToggle.IsOn = config.PauseOnMovement;
-        ShowActionCounterToggle.IsOn = config.ShowActionCounter;
+        PauseOnMovementAutoClickToggle.IsOn = config.PauseOnMovementForAutoClick;
+        PauseOnMovementJiggleToggle.IsOn = config.PauseOnMovementForJiggle;
+        PauseOnMovementAutoClickToggle.IsEnabled = config.PauseOnMovement;
+        PauseOnMovementJiggleToggle.IsEnabled = config.PauseOnMovement;
+        UpdatePauseOnMovementExpanderDescription();
+
+        ShowStopButtonDisplayToggle.IsOn = config.ShowStopButtonDisplay;
+        StopButtonDisplayCountdownRadioButton.IsEnabled = config.ShowStopButtonDisplay;
+        StopButtonDisplayCounterRadioButton.IsEnabled = config.ShowStopButtonDisplay;
+        (config.StopButtonDisplayMode switch
+        {
+            "Counter" => StopButtonDisplayCounterRadioButton,
+            _ => StopButtonDisplayCountdownRadioButton
+        }).IsChecked = true;
+        UpdateStopButtonDisplayExpanderDescription();
+
         CloseToTrayToggle.IsOn = config.CloseToTray;
         ShowTaskbarProgressToggle.IsOn = config.ShowTaskbarProgress;
-        AutoCheckForUpdatesToggle.IsOn = config.AutoCheckForUpdates;
-        ShowAdvancedIntervalDisplayToggle.IsOn = config.ShowAdvancedIntervalDisplay;
+
+        RunAutomationOnLaunchToggle.IsOn = config.RunAutomationOnLaunch;
+        RandomizeIntervalOnLaunchToggle.IsOn = config.RandomizeIntervalOnLaunch;
+
+        _preferredMode = config.PreferredMode;
+        PreferredModeDropDownButton.Content = FormatPreferredMode(_preferredMode);
+
+        (config.ShowAdvancedIntervalDisplay ? IntervalDisplayAdvancedRadioButton : IntervalDisplayBasicRadioButton).IsChecked = true;
+        UpdateIntervalDisplayExpanderDescription();
 
         _hotkeyModifiers = config.HotkeyModifiers;
         _hotkeyKey = config.HotkeyKey;
         HotkeyButtonLabel.Text = FormatHotkey(_hotkeyModifiers, _hotkeyKey);
 
-        ThemeComboBox.SelectedItem = config.Theme switch
+        (config.Theme switch
         {
-            "Light" => ThemeLightItem,
-            "Dark" => ThemeDarkItem,
-            _ => ThemeSystemItem
-        };
+            "Light" => ThemeLightRadioButton,
+            "Dark" => ThemeDarkRadioButton,
+            _ => ThemeSystemRadioButton
+        }).IsChecked = true;
+        UpdateThemeExpanderDescription();
 
         _isInitializing = false;
     }
 
     /// <summary>
-    /// Called by MainWindow's SettingsBackButton_Click when the Settings overlay closes - cancels
-    /// any in-progress hotkey capture (otherwise _isRecordingHotkey stays stuck true, permanently
+    /// Queries the OS's current StartupTask state and reflects it onto StartWithWindowsToggle. Runs
+    /// fire-and-forget from the constructor since StartupTask.GetAsync is a WinRT async call, unlike
+    /// the synchronous ConfigService.Load() that LoadFromConfig uses.
+    /// </summary>
+    private async Task LoadStartupTaskStateAsync()
+    {
+        StartupTaskState state;
+        try
+        {
+            state = await StartupTaskService.GetStateAsync();
+        }
+        catch (Exception)
+        {
+            // Not running packaged/registered (e.g. launched as a raw .exe rather than via the Start
+            // Menu/winapp run) - StartupTask.GetAsync throws in that case. Hide the row rather than
+            // showing a toggle that can never actually do anything.
+            StartWithWindowsCard.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        _isInitializing = true;
+        StartWithWindowsToggle.IsOn = state is StartupTaskState.Enabled or StartupTaskState.EnabledByPolicy;
+        StartWithWindowsToggle.IsEnabled = state is not (StartupTaskState.DisabledByPolicy or StartupTaskState.EnabledByPolicy);
+        _isInitializing = false;
+    }
+
+    /// <summary>
+    /// Also drives ThemeExpanderIcon's Glyph - System keeps the expander's own XAML-declared
+    /// default ("Color") icon; Light/Dark switch to the same per-mode sun/moon icons
+    /// ThemeLightItem/ThemeDarkItem used before Theme's options became plain RadioButtons.
+    /// </summary>
+    private void UpdateThemeExpanderDescription()
+    {
+        if (ThemeLightRadioButton.IsChecked == true)
+        {
+            ThemeExpander.Description = "Light";
+            ThemeExpanderIcon.Glyph = "";
+        }
+        else if (ThemeDarkRadioButton.IsChecked == true)
+        {
+            ThemeExpander.Description = "Dark";
+            ThemeExpanderIcon.Glyph = "";
+        }
+        else
+        {
+            ThemeExpander.Description = "Follow system";
+            ThemeExpanderIcon.Glyph = "";
+        }
+    }
+
+    private void UpdateIntervalDisplayExpanderDescription() =>
+        IntervalDisplayExpander.Description = IntervalDisplayAdvancedRadioButton.IsChecked == true
+            ? "Hours, Minutes, Seconds, Milliseconds"
+            : "Minutes and Seconds";
+
+    /// <summary>
+    /// Mirrors UpdateStopButtonDisplayExpanderDescription's style for PauseOnMovementExpander: "Off"
+    /// while the master toggle is off, otherwise which of "Auto click"/"Jiggle" the two sub-toggles
+    /// currently apply to (comma-joined - both, either alone, or "On" if the master is on but neither
+    /// sub-toggle is, which is a valid - if inert - combination rather than one this needs to prevent).
+    /// </summary>
+    private void UpdatePauseOnMovementExpanderDescription()
+    {
+        if (!PauseOnMovementToggle.IsOn)
+        {
+            PauseOnMovementExpander.Description = "Off";
+            return;
+        }
+
+        var modes = new List<string>();
+        if (PauseOnMovementAutoClickToggle.IsOn)
+        {
+            modes.Add("Auto click");
+        }
+
+        if (PauseOnMovementJiggleToggle.IsOn)
+        {
+            modes.Add("Jiggle");
+        }
+
+        PauseOnMovementExpander.Description = modes.Count > 0 ? string.Join(", ", modes) : "On";
+    }
+
+    private void UpdateStopButtonDisplayExpanderDescription() =>
+        StopButtonDisplayExpander.Description = !ShowStopButtonDisplayToggle.IsOn
+            ? "Off"
+            : StopButtonDisplayCounterRadioButton.IsChecked == true
+                ? "Click/jiggle count"
+                : "Time remaining";
+
+    /// <summary>
+    /// Called immediately by MainWindow's SettingsBackButton_Click when the Settings overlay starts
+    /// closing (before the slide-out animation and ResetAfterClose's own delay below) - cancels any
+    /// in-progress hotkey capture (otherwise _isRecordingHotkey stays stuck true, permanently
     /// no-opping HotkeyButton_Click) and, since recording leaves the previous hotkey unregistered
     /// (see HotkeyButton_Click), re-registers it so closing Settings mid-capture never leaves the app
-    /// with no hotkey active.
-    ///
-    /// For the update button: if nothing is pending (never checked, or the last check came back
-    /// clean), reset immediately - there's nothing to grace-period, and this also clears a lingering
-    /// transient "You're up to date"/error message. If a real update WAS found, don't clear it right
-    /// away - start (or, if already running, just leave alone) a 15-minute dismiss grace period via
-    /// StartPendingUpdateDismissTimerIfNeeded, so a user who glances at "Update to vX.Y.Z" and closes
-    /// Settings still has a window to reopen and act on it before it quietly resets to idle.
+    /// with no hotkey active. This can't wait for ResetAfterClose's delay like the expanders/error
+    /// banner do - the hotkey has to be re-registered right away, not 300ms into the user having
+    /// already left Settings.
     /// </summary>
     public void HandleHostClosing()
     {
@@ -150,43 +254,34 @@ public sealed partial class SettingsPanel : UserControl
             HotkeyButtonLabel.Text = FormatHotkey(_hotkeyModifiers, _hotkeyKey);
             TryRegisterHotkey?.Invoke(_hotkeyModifiers, _hotkeyKey);
         }
-
-        if (_pendingUpdate is null)
-        {
-            SetUpdateButtonLabel("Check for updates");
-            return;
-        }
-
-        StartPendingUpdateDismissTimerIfNeeded();
     }
 
     /// <summary>
-    /// Starts the 15-minute pending-update dismiss grace period, but only if one isn't already
-    /// running - deliberately a no-op on every subsequent call while _pendingUpdateDismissTimer is
-    /// non-null, which is what makes reopening/reclosing Settings NOT push the 15-minute deadline
-    /// back (the user's explicit requirement). Once it fires, it clears _pendingUpdate and resets
-    /// UpdateButton to idle regardless of whether Settings is open or closed at that moment - this is
-    /// a real wall-clock DispatcherTimer, not something tied to Settings' visibility.
+    /// Called by MainWindow's SettingsBackButton_Click once the slide-out animation has fully
+    /// finished (300ms after HandleHostClosing above, alongside SettingsScrollViewer's own reset back
+    /// to the top) - resets everything else Settings should always come back to fresh, however the
+    /// user left it: collapses every expandable card, and clears the startup-task error banner (see
+    /// StartWithWindowsToggle_Toggled) rather than leaving a stale error sitting there until the app
+    /// is relaunched. Deliberately delayed rather than run immediately like HandleHostClosing does,
+    /// so none of this is visible mid-slide - the expander collapse also sidesteps a real gap in
+    /// SettingsExpander itself (confirmed against the installed
+    /// CommunityToolkit.WinUI.Controls.SettingsControls source): disabling an expander while
+    /// automation is running only blocks its chevron's clicks, it doesn't collapse anything, so one
+    /// left open when automation starts would otherwise stay frozen open with no way for the user to
+    /// collapse it mid-run - closing Settings already guarantees a fresh, collapsed state instead.
     /// </summary>
-    private void StartPendingUpdateDismissTimerIfNeeded()
+    public void ResetAfterClose()
     {
-        if (_pendingUpdateDismissTimer is not null)
-        {
-            return;
-        }
+        ThemeExpander.IsExpanded = false;
+        IntervalDisplayExpander.IsExpanded = false;
+        StopButtonDisplayExpander.IsExpanded = false;
+        PauseOnMovementExpander.IsExpanded = false;
+        AppLaunchBehaviorExpander.IsExpanded = false;
 
-        _pendingUpdateDismissTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(15) };
-        _pendingUpdateDismissTimer.Tick += (_, _) =>
-        {
-            _pendingUpdateDismissTimer!.Stop();
-            _pendingUpdateDismissTimer = null;
-            ApplyPendingUpdate(null);
-            SetUpdateButtonLabel("Check for updates");
-        };
-        _pendingUpdateDismissTimer.Start();
+        StartupTaskErrorTextBlock.Visibility = Visibility.Collapsed;
     }
 
-    /// <summary>Flips PauseOnMovementToggle - used by MainWindow's tray "Pause spinning on movement" context menu item so PauseOnMovementToggle_Toggled remains the single place that persists/raises the change.</summary>
+    /// <summary>Flips PauseOnMovementToggle (the master switch) - used by MainWindow's tray "Pause on movement" context menu item so PauseOnMovementToggle_Toggled remains the single place that persists/raises the change.</summary>
     public void TogglePauseOnMovement() => PauseOnMovementToggle.IsOn = !PauseOnMovementToggle.IsOn;
 
     /// <summary>
@@ -195,39 +290,137 @@ public sealed partial class SettingsPanel : UserControl
     /// </summary>
     public void SetInputsEnabled(bool enabled)
     {
-        HotkeyButton.IsEnabled = enabled;
-        ShowActionCounterToggle.IsEnabled = enabled;
+        HotkeyCard.IsEnabled = enabled;
+
+        // StopButtonDisplayExpander itself (not just its toggle/radio buttons) has to be disabled too,
+        // otherwise its chevron stays clickable and the user can still expand/collapse it while
+        // everything inside is locked - unlike IntervalDisplayExpander below, whose own IsEnabled was
+        // already covering this same case.
+        StopButtonDisplayExpander.IsEnabled = enabled;
+        ShowStopButtonDisplayToggle.IsEnabled = enabled;
+        StopButtonDisplayCountdownRadioButton.IsEnabled = enabled && ShowStopButtonDisplayToggle.IsOn;
+        StopButtonDisplayCounterRadioButton.IsEnabled = enabled && ShowStopButtonDisplayToggle.IsOn;
+
+        IntervalDisplayExpander.IsEnabled = enabled;
+
+        // Both the wrapping SettingsExpander (so its own native Disabled visual state dims the Header
+        // text/icon, and its chevron can't be clicked mid-run - same reasoning as
+        // StopButtonDisplayExpander above) AND the master ToggleSwitch itself (so
+        // RefreshToggleSwitchDisabledVisual's own toggle.IsEnabled read below stays accurate) are set
+        // here. The two per-mode sub-toggles use the same combined-gating pattern as
+        // StopButtonDisplayCountdownRadioButton/CounterRadioButton above: locked while automation is
+        // running, AND while the master toggle itself is off.
+        PauseOnMovementExpander.IsEnabled = enabled;
         PauseOnMovementToggle.IsEnabled = enabled;
-        ShowAdvancedIntervalDisplayToggle.IsEnabled = enabled;
-
-        HotkeyCaptionTextBlock.IsEnabled = enabled;
-        ShowActionCounterCaption.IsEnabled = enabled;
-        PauseOnMovementCaption.IsEnabled = enabled;
-        ShowAdvancedIntervalDisplayCaption.IsEnabled = enabled;
+        PauseOnMovementAutoClickToggle.IsEnabled = enabled && PauseOnMovementToggle.IsOn;
+        PauseOnMovementJiggleToggle.IsEnabled = enabled && PauseOnMovementToggle.IsOn;
     }
 
-    private void ShowActionCounterToggle_Toggled(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Works around a native ToggleSwitch limitation: its default template's "Disabled" CommonState
+    /// (see the installed WinUI SDK's generic.xaml, DefaultToggleSwitchStyle) recolors the Off-track
+    /// via ColorAnimationUsingKeyFrames targeting (Shape.Fill/Stroke).(SolidColorBrush.Color) -
+    /// {ThemeResource ToggleSwitchFillOffDisabled}/StrokeOffDisabled get resolved once, the moment the
+    /// Storyboard runs, and baked as a literal Color onto the brush in place. That's not a live theme
+    /// binding, so a toggle left sitting in Disabled (i.e. locked while automation runs - see
+    /// SetInputsEnabled above) keeps showing whichever theme's gray was baked in whenever it was last
+    /// disabled, even after the app/OS theme actually changes. The On-track side of the same animation
+    /// bakes an accent-based color instead, which happens to look fine regardless of theme (the accent
+    /// color itself doesn't change between Light/Dark) - that's why this only reads as visibly wrong on
+    /// a toggle that's Off while locked, not one that's On.
+    ///
+    /// Re-entering "Disabled" re-runs its Storyboard, re-resolving the ThemeResources against
+    /// whatever theme is current now and re-baking fresh colors - cheaper than reimplementing the
+    /// disabled look with shadowed brushes (the fix DimmableLabel/PowerToggleAlternateButton needed
+    /// elsewhere), since the native template's own Storyboard already does the right thing, it just
+    /// needs to be told to run again. The "Normal" hop first is required: GoToState is a no-op if the
+    /// control is already in the target state, so going straight back to "Disabled" wouldn't restart
+    /// the Storyboard.
+    ///
+    /// Called from MainWindow's RootGrid.ActualThemeChanged handler - covers both an explicit Theme
+    /// dropdown change and the OS theme changing while "Follow system" is selected, same as
+    /// UpdateModeIndicators/UpdateRandomizeIntervalIndicator's own reason for hooking that event. That
+    /// same handler also calls RefreshToggleSwitchDisabledVisual directly (it's internal, not private,
+    /// for exactly this) for MainWindow's own AutoStopToggle - a native ToggleSwitch outside
+    /// SettingsPanel entirely, but subject to this identical native-template limitation whenever it's
+    /// locked while automation runs (see MainWindow.SetStopControlsEnabled).
+    /// </summary>
+    public void RefreshDisabledToggleSwitchesTheme()
+    {
+        RefreshToggleSwitchDisabledVisual(PauseOnMovementToggle);
+        RefreshToggleSwitchDisabledVisual(PauseOnMovementAutoClickToggle);
+        RefreshToggleSwitchDisabledVisual(PauseOnMovementJiggleToggle);
+        RefreshToggleSwitchDisabledVisual(ShowStopButtonDisplayToggle);
+    }
+
+    internal static void RefreshToggleSwitchDisabledVisual(ToggleSwitch toggle)
+    {
+        if (!toggle.IsEnabled)
+        {
+            VisualStateManager.GoToState(toggle, "Normal", useTransitions: false);
+            VisualStateManager.GoToState(toggle, "Disabled", useTransitions: false);
+        }
+    }
+
+    private void StopButtonDisplayRadioButton_Checked(object sender, RoutedEventArgs e)
     {
         if (_isInitializing)
         {
             return;
         }
 
-        ShowActionCounterChanged?.Invoke(this, EventArgs.Empty);
-        ConfigService.Update(c => c.ShowActionCounter = ShowActionCounterToggle.IsOn);
+        if (sender is RadioButton { Tag: string mode })
+        {
+            StopButtonDisplayChanged?.Invoke(this, EventArgs.Empty);
+            ConfigService.Update(c => c.StopButtonDisplayMode = mode);
+            UpdateStopButtonDisplayExpanderDescription();
+        }
     }
 
-    private void ShowAdvancedIntervalDisplayToggle_Toggled(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Gates StopButtonDisplayCountdownRadioButton/StopButtonDisplayCounterRadioButton - see
+    /// AppConfig.ShowStopButtonDisplay's own comment. Only ever fires while automation isn't running
+    /// (the toggle itself is locked via SetInputsEnabled whenever it is - see
+    /// SetStopControlsEnabled's identical AutoStopToggle_Toggled precedent in MainWindow.xaml.cs for
+    /// why that means this can set the two RadioButtons' IsEnabled from
+    /// ShowStopButtonDisplayToggle.IsOn alone, with no separate "not running" check needed here).
+    /// </summary>
+    private void ShowStopButtonDisplayToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (_isInitializing)
         {
             return;
         }
 
-        ShowAdvancedIntervalDisplayChanged?.Invoke(this, EventArgs.Empty);
-        ConfigService.Update(c => c.ShowAdvancedIntervalDisplay = ShowAdvancedIntervalDisplayToggle.IsOn);
+        StopButtonDisplayCountdownRadioButton.IsEnabled = ShowStopButtonDisplayToggle.IsOn;
+        StopButtonDisplayCounterRadioButton.IsEnabled = ShowStopButtonDisplayToggle.IsOn;
+        StopButtonDisplayChanged?.Invoke(this, EventArgs.Empty);
+        ConfigService.Update(c => c.ShowStopButtonDisplay = ShowStopButtonDisplayToggle.IsOn);
+        UpdateStopButtonDisplayExpanderDescription();
     }
 
+    private void IntervalDisplayRadioButton_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializing)
+        {
+            return;
+        }
+
+        if (sender is RadioButton { Tag: string mode })
+        {
+            ShowAdvancedIntervalDisplayChanged?.Invoke(this, EventArgs.Empty);
+            ConfigService.Update(c => c.ShowAdvancedIntervalDisplay = mode == "Advanced");
+            UpdateIntervalDisplayExpanderDescription();
+        }
+    }
+
+    /// <summary>
+    /// The master on/off switch. Gates PauseOnMovementAutoClickToggle/PauseOnMovementJiggleToggle -
+    /// mirrors ShowStopButtonDisplayToggle_Toggled's exact pattern for its own two RadioButtons - only
+    /// ever fires while automation isn't running (the toggle itself is locked via SetInputsEnabled
+    /// whenever it is, same as ShowStopButtonDisplayToggle), so this can set the two sub-toggles'
+    /// IsEnabled from PauseOnMovementToggle.IsOn alone, with no separate "not running" check needed here.
+    /// </summary>
     private void PauseOnMovementToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (_isInitializing)
@@ -235,8 +428,59 @@ public sealed partial class SettingsPanel : UserControl
             return;
         }
 
+        PauseOnMovementAutoClickToggle.IsEnabled = PauseOnMovementToggle.IsOn;
+        PauseOnMovementJiggleToggle.IsEnabled = PauseOnMovementToggle.IsOn;
         PauseOnMovementChanged?.Invoke(this, EventArgs.Empty);
         ConfigService.Update(c => c.PauseOnMovement = PauseOnMovementToggle.IsOn);
+        UpdatePauseOnMovementExpanderDescription();
+    }
+
+    /// <summary>Persists whether "Pause on movement" applies to Auto click mode - see AppConfig.PauseOnMovementForAutoClick and IsPauseOnMovementActiveForMode.</summary>
+    private void PauseOnMovementAutoClickToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializing)
+        {
+            return;
+        }
+
+        ConfigService.Update(c => c.PauseOnMovementForAutoClick = PauseOnMovementAutoClickToggle.IsOn);
+        PauseOnMovementChanged?.Invoke(this, EventArgs.Empty);
+        UpdatePauseOnMovementExpanderDescription();
+    }
+
+    /// <summary>Persists whether "Pause on movement" applies to Jiggle mode - see AppConfig.PauseOnMovementForJiggle and IsPauseOnMovementActiveForMode.</summary>
+    private void PauseOnMovementJiggleToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializing)
+        {
+            return;
+        }
+
+        ConfigService.Update(c => c.PauseOnMovementForJiggle = PauseOnMovementJiggleToggle.IsOn);
+        PauseOnMovementChanged?.Invoke(this, EventArgs.Empty);
+        UpdatePauseOnMovementExpanderDescription();
+    }
+
+    /// <summary>
+    /// Combines the master toggle with whichever per-mode sub-toggle applies to <paramref name="mode"/>
+    /// into the single bool MouseAutomationEngine.Start actually needs - replaces the old plain
+    /// PauseOnMovement property now that the engine itself no longer resolves Jiggle-only scoping
+    /// internally (see MouseAutomationEngine.RunLoopAsync's pauseOnMovementActive). Called from
+    /// MainWindow right where PauseOnMovement used to be read, passing the mode about to start.
+    /// </summary>
+    public bool IsPauseOnMovementActiveForMode(AutomationMode mode)
+    {
+        if (!PauseOnMovementToggle.IsOn)
+        {
+            return false;
+        }
+
+        return mode switch
+        {
+            AutomationMode.Click => PauseOnMovementAutoClickToggle.IsOn,
+            AutomationMode.Jiggle => PauseOnMovementJiggleToggle.IsOn,
+            _ => false
+        };
     }
 
     private void CloseToTrayToggle_Toggled(object sender, RoutedEventArgs e)
@@ -250,6 +494,35 @@ public sealed partial class SettingsPanel : UserControl
         CloseToTrayChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    private async void StartWithWindowsToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializing)
+        {
+            return;
+        }
+
+        StartupTaskErrorTextBlock.Visibility = Visibility.Collapsed;
+
+        if (StartWithWindowsToggle.IsOn)
+        {
+            var state = await StartupTaskService.EnableAsync();
+            if (state != StartupTaskState.Enabled)
+            {
+                _isInitializing = true;
+                StartWithWindowsToggle.IsOn = false;
+                _isInitializing = false;
+                StartupTaskErrorTextBlock.Text = state == StartupTaskState.DisabledByPolicy
+                    ? "Startup is disabled by your organization's policy."
+                    : "Windows blocked this - check Settings > Apps > Startup or Task Manager > Startup apps.";
+                StartupTaskErrorTextBlock.Visibility = Visibility.Visible;
+            }
+        }
+        else
+        {
+            await StartupTaskService.DisableAsync();
+        }
+    }
+
     private void ShowTaskbarProgressToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (_isInitializing)
@@ -261,29 +534,54 @@ public sealed partial class SettingsPanel : UserControl
         ShowTaskbarProgressChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    // No MainWindow-facing event needed here (unlike the toggles above) - this setting is only ever
-    // read once, at the next launch (see MainWindow.InitializeAutoUpdateCheck), not reacted to live.
-    private void AutoCheckForUpdatesToggle_Toggled(object sender, RoutedEventArgs e)
+    private void RunAutomationOnLaunchToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (_isInitializing)
         {
             return;
         }
 
-        ConfigService.Update(c => c.AutoCheckForUpdates = AutoCheckForUpdatesToggle.IsOn);
+        ConfigService.Update(c => c.RunAutomationOnLaunch = RunAutomationOnLaunchToggle.IsOn);
     }
 
-    private void ThemeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void RandomizeIntervalOnLaunchToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (_isInitializing)
         {
             return;
         }
 
-        if (ThemeComboBox.SelectedItem is ComboBoxItem { Tag: string theme })
+        ConfigService.Update(c => c.RandomizeIntervalOnLaunch = RandomizeIntervalOnLaunchToggle.IsOn);
+    }
+
+    /// <summary>
+    /// No _isInitializing guard needed here, unlike every RadioButton/ToggleSwitch handler in this
+    /// file: LoadFromConfig sets PreferredModeDropDownButton.Content directly rather than checking a
+    /// MenuFlyoutItem, so unlike RadioButton.IsChecked/ToggleSwitch.IsOn, this Click event only ever
+    /// fires from a real user pick, never as a side effect of loading persisted state.
+    /// </summary>
+    private void PreferredModeMenuFlyoutItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuFlyoutItem { Tag: string mode })
+        {
+            _preferredMode = mode;
+            PreferredModeDropDownButton.Content = FormatPreferredMode(mode);
+            ConfigService.Update(c => c.PreferredMode = mode);
+        }
+    }
+
+    private void ThemeRadioButton_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializing)
+        {
+            return;
+        }
+
+        if (sender is RadioButton { Tag: string theme })
         {
             ThemeSelectionChanged?.Invoke(this, theme);
             ConfigService.Update(c => c.Theme = theme);
+            UpdateThemeExpanderDescription();
         }
     }
 
@@ -435,110 +733,11 @@ public sealed partial class SettingsPanel : UserControl
         return string.Join("+", parts);
     }
 
-    /// <summary>
-    /// Single place that reflects "is there a known pending update" onto UpdateButtonIcon/
-    /// UpdateButton's visuals and _pendingUpdate itself. Deliberately does NOT touch
-    /// UpdateButtonLabel.Text - callers still call SetUpdateButtonLabel themselves. Purely in-memory -
-    /// nothing here is ever persisted, so an update check result never survives past Settings closing
-    /// (see HandleHostClosing) let alone an app restart.
-    /// </summary>
-    private void ApplyPendingUpdate(UpdateCheckResult? result)
+    private static string FormatPreferredMode(string mode) => mode switch
     {
-        _pendingUpdate = result;
+        "Click" => "Auto click",
+        "Jiggle" => "Jiggle",
+        _ => "Last used"
+    };
 
-        if (result is { IsUpdateAvailable: true })
-        {
-            UpdateButtonIcon.Glyph = UpdateButtonAvailableGlyph;
-            UpdateButton.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
-        }
-        else
-        {
-            UpdateButtonIcon.Glyph = UpdateButtonCheckGlyph;
-            UpdateButton.ClearValue(Button.StyleProperty);
-        }
-    }
-
-    /// <summary>
-    /// First click (no _pendingUpdate yet): checks GitHub Releases and, if newer, relabels the button
-    /// instead of downloading immediately. Second click (on that relabeled button): downloads and
-    /// launches the installer, then raises CloseAppRequested so MainWindow can exit via its own
-    /// _isClosingConfirmed/Close() pattern, letting the installer overwrite files this process would
-    /// otherwise still be holding open - unless the release has no .exe asset yet, in which case it
-    /// opens the release page in the browser instead and leaves the app running. This is the only
-    /// update check MouseUtil ever performs - purely manual, user-initiated - and its result never
-    /// outlives Settings being closed (see HandleHostClosing).
-    /// </summary>
-    private async void UpdateButton_Click(object sender, RoutedEventArgs e)
-    {
-        UpdateButton.IsEnabled = false;
-
-        if (_pendingUpdate is { } pendingUpdate)
-        {
-            if (pendingUpdate.DownloadUrl is null)
-            {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(pendingUpdate.ReleaseUrl) { UseShellExecute = true });
-                UpdateButton.IsEnabled = true;
-                return;
-            }
-
-            SetUpdateButtonLabel("Downloading...");
-            try
-            {
-                var installerPath = await UpdateChecker!.DownloadInstallerAsync(pendingUpdate.DownloadUrl, CancellationToken.None);
-                UpdateChecker!.LaunchInstaller(installerPath);
-                CloseAppRequested?.Invoke(this, EventArgs.Empty);
-            }
-            catch (Exception ex) when (ex is HttpRequestException or IOException)
-            {
-                SetUpdateButtonLabel("Couldn't download the update. Try again later.", isError: true);
-                UpdateButton.IsEnabled = true;
-            }
-
-            return;
-        }
-
-        SetUpdateButtonLabel("Checking...");
-        try
-        {
-            var currentVersion = UpdateService.GetCurrentVersionString();
-            var result = await UpdateChecker!.CheckForUpdateAsync(currentVersion, CancellationToken.None);
-
-            if (result.IsUpdateAvailable)
-            {
-                SetUpdateButtonLabel($"Update to v{result.LatestVersion}");
-                ApplyPendingUpdate(result);
-            }
-            else
-            {
-                SetUpdateButtonLabel($"You're up to date (v{currentVersion})");
-                ApplyPendingUpdate(null);
-            }
-        }
-        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException or FormatException)
-        {
-            SetUpdateButtonLabel("Failed. Try again later.", isError: true);
-        }
-        finally
-        {
-            UpdateButton.IsEnabled = true;
-        }
-    }
-
-    /// <summary>
-    /// Sets UpdateButtonLabel's text and (for errors) tints it. isError borrows HotkeyErrorTextBlock's
-    /// already-theme-resolved Foreground; the non-error path clears any leftover tint via ClearValue
-    /// rather than hardcoding a "default" brush.
-    /// </summary>
-    private void SetUpdateButtonLabel(string text, bool isError = false)
-    {
-        UpdateButtonLabel.Text = text;
-        if (isError)
-        {
-            UpdateButtonLabel.Foreground = HotkeyErrorTextBlock.Foreground;
-        }
-        else
-        {
-            UpdateButtonLabel.ClearValue(TextBlock.ForegroundProperty);
-        }
-    }
 }

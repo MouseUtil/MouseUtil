@@ -6,7 +6,7 @@ namespace MouseUtil.Services;
 public enum AutomationMode
 {
     Click,
-    Spin
+    Jiggle
 }
 
 public enum StatusKind
@@ -18,21 +18,22 @@ public enum StatusKind
     Paused,
 
     /// <summary>
-    /// The one-shot "Starting now" reported synchronously by Start() for Spin mode (which has no
+    /// The one-shot "Starting now" reported synchronously by Start() for Jiggle mode (which has no
     /// startup grace countdown to report through). Distinct from Starting so MainWindow can apply a
     /// minimum on-screen hold to just this report, without affecting Click mode's real-time
     /// "Starting in Xs" countdown (which also uses Starting).
     /// </summary>
-    SpinStarting
+    JiggleStarting
 }
 
 public sealed class StatusChangedEventArgs : EventArgs
 {
-    public StatusChangedEventArgs(string text, StatusKind kind, double? progress = null)
+    public StatusChangedEventArgs(string text, StatusKind kind, double? progress = null, TimeSpan? remaining = null)
     {
         Text = text;
         Kind = kind;
         Progress = progress;
+        Remaining = remaining;
     }
 
     public string Text { get; }
@@ -46,6 +47,15 @@ public sealed class StatusChangedEventArgs : EventArgs
     /// resume-countdown yet), in which case the taskbar bar's last value is left untouched.
     /// </summary>
     public double? Progress { get; }
+
+    /// <summary>
+    /// Raw time remaining until the next action fires (or, while paused, until the pause's resume
+    /// countdown completes) - null when this report doesn't carry a live countdown of its own (e.g.
+    /// "Paused" right as movement is detected, or during the sub-StillnessDisplayThreshold stillness
+    /// window). Added alongside the already-formatted Text/Progress so callers that build their own
+    /// display text (MainWindow's Countdown display mode) don't have to re-derive seconds from Progress.
+    /// </summary>
+    public TimeSpan? Remaining { get; }
 }
 
 public sealed class ActionPerformedEventArgs : EventArgs
@@ -59,7 +69,7 @@ public sealed class ActionPerformedEventArgs : EventArgs
 }
 
 /// <summary>
-/// Runs the click/spin state machine on a background task. All timing decisions happen here;
+/// Runs the click/jiggle state machine on a background task. All timing decisions happen here;
 /// callers only ever see <see cref="StatusChanged"/> notifications and must marshal them to the UI thread.
 /// </summary>
 public sealed class MouseAutomationEngine
@@ -71,19 +81,19 @@ public sealed class MouseAutomationEngine
 
     // Randomize-interval bounds (see GetEffectiveInterval): the randomized draw's floor is whichever
     // is larger, 10% of the configured interval or this absolute minimum - at short configured
-    // intervals, 10% alone could fall below Spin mode's own ~192ms blocking SpinSweep animation
-    // (SpinSteps * SpinStepDurationMs), which would mean the "gap" between actions is sometimes
+    // intervals, 10% alone could fall below Jiggle mode's own ~192ms blocking JiggleSweep animation
+    // (JiggleSteps * JiggleStepDurationMs), which would mean the "gap" between actions is sometimes
     // entirely consumed by the animation itself, firing back-to-back with no visible gap at all.
     private const double RandomizeIntervalMinPercent = 0.10;
     private static readonly TimeSpan RandomizeIntervalMinFloor = TimeSpan.FromMilliseconds(250);
 
     // Below this, the countdown's last "in 0.1s" tick is replaced by "Starting now" / "Clicking
-    // now" / "Spinning now" instead - see FormatCountdownStatus. Purely a status-text display
+    // now" / "Jiggling now" instead - see FormatCountdownStatus. Purely a status-text display
     // choice; never affects when the next action actually fires.
     private static readonly TimeSpan CountdownLabelThreshold = TimeSpan.FromMilliseconds(TickMilliseconds);
-    private const int SpinRadiusPixels = 6; // ~12px diameter circle
-    private const int SpinSteps = 16;
-    private const double SpinStepDurationMs = 12.0;
+    private const int JiggleRadiusPixels = 6; // ~12px diameter circle
+    private const int JiggleSteps = 16;
+    private const double JiggleStepDurationMs = 12.0;
 
     private static readonly TimeSpan FirstClickSelfStopWindow = TimeSpan.FromMilliseconds(250);
 
@@ -123,15 +133,16 @@ public sealed class MouseAutomationEngine
     /// Starts the automation loop. skipStartupCountdown bypasses the usual StartupGracePeriod
     /// countdown - used when Start is triggered via the global hotkey (see
     /// MainWindow.HotkeyService_HotkeyPressed), which performs the first action immediately instead
-    /// of waiting, unlike a normal Start-button press. Spin mode always skips the countdown
+    /// of waiting, unlike a normal Start-button press. Jiggle mode always skips the countdown
     /// regardless of this flag - see the needsStartupGrace check in RunLoopAsync.
     ///
     /// randomizeInterval, when true, draws a fresh random gap (see GetEffectiveInterval) uniformly
     /// between a floor and interval (used as-is as the maximum) at the start of every normal cycle,
-    /// instead of firing at a fixed interval every time. This never affects the Spin-mode
-    /// pause-on-movement resume threshold, which always waits for the full configured interval
-    /// regardless of randomizeInterval - that wait needs to stay predictable since it's a direct
-    /// reaction to the user's own mouse movement, not part of the automated cadence.
+    /// instead of firing at a fixed interval every time. This never affects the pause-on-movement
+    /// resume threshold (see pauseOnMovementEnabled below - no longer Jiggle-only, see
+    /// SettingsPanel.IsPauseOnMovementActiveForMode), which always waits for the full configured
+    /// interval regardless of randomizeInterval - that wait needs to stay predictable since it's a
+    /// direct reaction to the user's own mouse movement, not part of the automated cadence.
     /// </summary>
     public void Start(AutomationMode mode, TimeSpan interval, DateTime? stopAt, int? stopAfterActionCount, bool pauseOnMovementEnabled, bool randomizeInterval, bool skipStartupCountdown = false)
     {
@@ -145,14 +156,14 @@ public sealed class MouseAutomationEngine
             IsRunning = true;
             Interlocked.Exchange(ref _firstClickInjectedTicks, 0);
 
-            // Spin mode skips RunStartupGraceAsync (see needsStartupGrace in RunLoopAsync), so
+            // Jiggle mode skips RunStartupGraceAsync (see needsStartupGrace in RunLoopAsync), so
             // without this, the first status report wouldn't happen until the background task is
-            // scheduled and fires the first spin - leaving a brief window where the UI still shows
-            // the previous run's stale "Stopped after N spins" text. Reporting synchronously here,
+            // scheduled and fires the first jiggle - leaving a brief window where the UI still shows
+            // the previous run's stale "Stopped after N jiggles" text. Reporting synchronously here,
             // before Task.Run, closes that gap instead of racing it.
-            if (mode == AutomationMode.Spin)
+            if (mode == AutomationMode.Jiggle)
             {
-                ReportStatus("Starting now", StatusKind.SpinStarting, 1);
+                ReportStatus("Starting now", StatusKind.JiggleStarting, 1);
             }
 
             var cts = new CancellationTokenSource();
@@ -199,7 +210,7 @@ public sealed class MouseAutomationEngine
         {
             // Only Click mode started via the Start button needs the startup grace period - it
             // exists so that click doesn't get immediately consumed as the first auto-click/stop.
-            // Spin mode has no click-to-stop race to guard against, and a hotkey-triggered start
+            // Jiggle mode has no click-to-stop race to guard against, and a hotkey-triggered start
             // (either mode) assumes the mouse isn't hovering the Start button, so both skip it.
             var needsStartupGrace = !skipStartupCountdown && mode == AutomationMode.Click;
             if (needsStartupGrace && !await RunStartupGraceAsync(stopAt, token).ConfigureAwait(false))
@@ -212,7 +223,7 @@ public sealed class MouseAutomationEngine
                 return;
             }
 
-            // Started before firing, not after, so that Spin mode's blocking SpinSweep animation
+            // Started before firing, not after, so that Jiggle mode's blocking JiggleSweep animation
             // (~192ms) counts against the first inter-action gap instead of adding invisible extra
             // time on top of it - see the main loop's intervalClock deadline below for the full reasoning.
             var intervalClock = Stopwatch.StartNew();
@@ -247,8 +258,12 @@ public sealed class MouseAutomationEngine
                     return;
                 }
 
-                var verb = mode == AutomationMode.Click ? "Clicking" : "Spinning";
-                var pauseOnMovementActive = mode == AutomationMode.Spin && pauseOnMovementEnabled;
+                var verb = mode == AutomationMode.Click ? "Clicking" : "Jiggling";
+
+                // Mode-scoping (Auto click vs Jiggle mode) now happens entirely on the caller side - see
+                // MainWindow's SettingsPanel.IsPauseOnMovementActiveForMode - so pauseOnMovementEnabled
+                // arriving here is already the fully-resolved "should this run pause on movement" bool.
+                var pauseOnMovementActive = pauseOnMovementEnabled;
                 var manualMovementDetected = false;
 
                 if (pauseOnMovementActive)
@@ -288,7 +303,7 @@ public sealed class MouseAutomationEngine
                         {
                             // Stood still for the full interval: fire immediately, as if the timer had gone off,
                             // then start a fresh full-length countdown - never resume from where it froze.
-                            // Restarted before firing rather than after, so a blocking Spin sweep counts
+                            // Restarted before firing rather than after, so a blocking Jiggle sweep counts
                             // against the new interval instead of adding on top of it - see the main loop's
                             // intervalClock deadline below for the full reasoning.
                             paused = false;
@@ -307,7 +322,7 @@ public sealed class MouseAutomationEngine
                         if (stillness >= StillnessDisplayThreshold)
                         {
                             var resumeRemaining = interval - stillness;
-                            ReportStatus(FormatCountdownStatus($"{verb} now", resumeRemaining, $"Paused... Resuming in {FormatSeconds(resumeRemaining)}"), StatusKind.Paused);
+                            ReportStatus(FormatCountdownStatus($"{verb} now", resumeRemaining, $"Paused... Resuming in {FormatSeconds(resumeRemaining)}"), StatusKind.Paused, remaining: resumeRemaining);
                         }
                         else
                         {
@@ -334,7 +349,7 @@ public sealed class MouseAutomationEngine
 
                 var kind = remaining <= ImminentThreshold ? StatusKind.Imminent : StatusKind.Running;
                 var progress = remaining.TotalMilliseconds / effectiveInterval.TotalMilliseconds;
-                ReportStatus(FormatCountdownStatus($"{verb} now", remaining, $"{verb} in {FormatSeconds(remaining)}"), kind, progress);
+                ReportStatus(FormatCountdownStatus($"{verb} now", remaining, $"{verb} in {FormatSeconds(remaining)}"), kind, progress, remaining);
 
                 var sleepMs = (int)Math.Min(TickMilliseconds, remaining.TotalMilliseconds);
                 if (sleepMs > 0)
@@ -350,8 +365,8 @@ public sealed class MouseAutomationEngine
                     }
 
                     // Restarted before firing, not after: Click mode's action is two sub-millisecond
-                    // SendInput calls, but Spin mode's SpinSweep blocks synchronously for real wall-clock
-                    // time (SpinSteps * SpinStepDurationMs, ~192ms) to animate the cursor before
+                    // SendInput calls, but Jiggle mode's JiggleSweep blocks synchronously for real wall-clock
+                    // time (JiggleSteps * JiggleStepDurationMs, ~192ms) to animate the cursor before
                     // returning. If the restart happened after the action returned, that ~192ms would
                     // never be subtracted from anything - it would be pure extra time stacked onto every
                     // single cycle, on top of the deadline above. Restarting first anchors the Stopwatch's
@@ -403,7 +418,7 @@ public sealed class MouseAutomationEngine
             }
 
             var startupProgress = remaining.TotalMilliseconds / StartupGracePeriod.TotalMilliseconds;
-            ReportStatus(FormatCountdownStatus("Starting now", remaining, $"Starting in {FormatSeconds(remaining)}"), StatusKind.Starting, startupProgress);
+            ReportStatus(FormatCountdownStatus("Starting now", remaining, $"Starting in {FormatSeconds(remaining)}"), StatusKind.Starting, startupProgress, remaining);
 
             var sleepMs = (int)Math.Min(TickMilliseconds, remaining.TotalMilliseconds);
             if (sleepMs > 0)
@@ -432,7 +447,7 @@ public sealed class MouseAutomationEngine
         }
         else
         {
-            SpinSweep(token);
+            JiggleSweep(token);
         }
 
         ActionPerformed?.Invoke(this, new ActionPerformedEventArgs(mode));
@@ -457,7 +472,7 @@ public sealed class MouseAutomationEngine
         return DateTime.UtcNow - new DateTime(ticks, DateTimeKind.Utc) <= FirstClickSelfStopWindow;
     }
 
-    private void SpinSweep(CancellationToken token)
+    private void JiggleSweep(CancellationToken token)
     {
         var origin = NativeMethods.GetCursorPosition();
         _autoMoving = true;
@@ -466,19 +481,19 @@ public sealed class MouseAutomationEngine
         {
             var stopwatch = Stopwatch.StartNew();
 
-            for (var step = 1; step <= SpinSteps; step++)
+            for (var step = 1; step <= JiggleSteps; step++)
             {
                 if (token.IsCancellationRequested)
                 {
                     break;
                 }
 
-                var angle = 2 * Math.PI * step / SpinSteps;
-                var x = origin.X + (int)Math.Round(SpinRadiusPixels * Math.Cos(angle));
-                var y = origin.Y + (int)Math.Round(SpinRadiusPixels * Math.Sin(angle));
+                var angle = 2 * Math.PI * step / JiggleSteps;
+                var x = origin.X + (int)Math.Round(JiggleRadiusPixels * Math.Cos(angle));
+                var y = origin.Y + (int)Math.Round(JiggleRadiusPixels * Math.Sin(angle));
                 NativeMethods.MoveCursorTo(x, y);
 
-                var targetElapsedMs = SpinStepDurationMs * step;
+                var targetElapsedMs = JiggleStepDurationMs * step;
                 while (stopwatch.Elapsed.TotalMilliseconds < targetElapsedMs)
                 {
                     Thread.Sleep(1);
@@ -529,12 +544,12 @@ public sealed class MouseAutomationEngine
     /// and its tick rate are untouched, this only changes how it's rendered once it gets long
     /// enough that reading raw seconds becomes hard to parse at a glance.
     /// </summary>
-    private static string FormatSeconds(TimeSpan t)
+    public static string FormatSeconds(TimeSpan t)
     {
         var totalSeconds = Math.Max(0, t.TotalSeconds);
         if (totalSeconds < 60)
         {
-            return totalSeconds < 10 ? $"{totalSeconds:0.0}s" : $"{Math.Ceiling(totalSeconds):0}s";
+            return totalSeconds < 9.5 ? $"{totalSeconds:0.0}s" : $"{Math.Ceiling(totalSeconds):0}s";
         }
 
         var wholeSeconds = (long)Math.Ceiling(totalSeconds);
@@ -548,15 +563,15 @@ public sealed class MouseAutomationEngine
     /// <summary>
     /// Once <paramref name="remaining"/> drops to CountdownLabelThreshold (the countdown's final
     /// "in 0.1s" tick before the next action fires), returns <paramref name="label"/> ("Starting
-    /// now"/"Clicking now"/"Spinning now") instead of <paramref name="countdownText"/> - purely a
+    /// now"/"Clicking now"/"Jiggling now") instead of <paramref name="countdownText"/> - purely a
     /// status-text display choice, never affects timing.
     /// </summary>
-    private static string FormatCountdownStatus(string label, TimeSpan remaining, string countdownText)
+    public static string FormatCountdownStatus(string label, TimeSpan remaining, string countdownText)
     {
         return remaining <= CountdownLabelThreshold ? label : countdownText;
     }
 
-    private void ReportStatus(string text, StatusKind kind, double? progress = null) => StatusChanged?.Invoke(this, new StatusChangedEventArgs(text, kind, progress));
+    private void ReportStatus(string text, StatusKind kind, double? progress = null, TimeSpan? remaining = null) => StatusChanged?.Invoke(this, new StatusChangedEventArgs(text, kind, progress, remaining));
 
     private void NotifyAutoStopped()
     {
