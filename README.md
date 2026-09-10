@@ -4,13 +4,14 @@
 jiggling/moving in place, so your PC doesn't go idle, lock, or sleep during long calls,
 downloads, or AFK sessions.
 
-### Download
-
-MouseUtil ships as an MSIX package through the Microsoft Store:
-
-https://apps.microsoft.com/detail/9NTDCVFVF0SQ
-
 ![MouseUtil](Assets/hero.gif)
+
+<a href="https://apps.microsoft.com/detail/9NTDCVFVF0SQ?referrer=appbadge&mode=full" target="_blank" rel="noopener noreferrer">
+    <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="https://get.microsoft.com/images/en-us%20dark.svg">
+        <img src="https://get.microsoft.com/images/en-us%20light.svg" width="300"/>
+    </picture>
+</a>
 
 ### Modes
 
