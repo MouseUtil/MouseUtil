@@ -36,10 +36,6 @@ downloads, or AFK sessions.
 - 🎨 Fluent design with light/dark/system theming, and Windows 11 Settings-style controls.
 - ⚙️ Settings persist across runs (`%APPDATA%\MouseUtil\config.json`).
 
-### Notes
-
-📦 **Unsigned installer**: Windows Defender SmartScreen may warn the first time you run it.
-
 ⚠️ **Fair warning**: I'm not a software developer. This project was developed primarily using
 Claude Code, with me directing the architecture, reviewing the generated code, testing, and
 making iterative improvements. All code in this repository has been reviewed before release. The
