@@ -15,20 +15,19 @@ downloads, or AFK sessions.
 
 ### Modes
 
-- **Auto click** — clicks at wherever the cursor currently is, without moving it.
-- **Jiggle** — sweeps the cursor around a tiny circle and returns it to the exact starting pixel,
-  without clicking.
+- **Auto click** - Automatically clicks where the mouse pointer currently is on the screen.
+- **Jiggle** - Moves the cursor in a tiny circle and lands back on the exact starting pixel.
 
 ### Features and options
 
 ⏱️ **Configurable interval** between actions, shown as Minutes and Seconds (millisecond precision, 3
 decimal places) or broken out into separate Hours/Minutes/Seconds/Milliseconds fields.
 
-🎲 **Randomized intervals** — optionally enable so each countdown is a random duration instead of a
+🎲 **Randomized intervals** - optionally enable so each countdown is a random duration instead of a
 fixed one. Your configured interval becomes the cap; the actual wait is drawn between that and a
 small floor (10% of the interval, or 250ms, whichever is larger).
 
-✋ **Pause on manual movement** — touching the mouse pauses the countdown instead of fighting you for
+✋ **Pause on manual movement** - touching the mouse pauses the countdown instead of fighting you for
 control. Can be turned on independently for Auto click and/or Jiggle.
 
 🛑 **Auto-stop** after a number of clicks/jiggles, or at a specific date and time.
@@ -38,13 +37,13 @@ control. Can be turned on independently for Auto click and/or Jiggle.
 📊 **Live countdown or action counter** right on the Start/Stop button, plus an optional taskbar
 progress overlay.
 
-📥 **System tray icon** with live status and a context menu to start/stop/pause without opening the
-window — optionally close to tray instead of exiting.
+📥 **System tray support** - optionally close to tray instead of exiting, with a live-status icon
+and a context menu to start/stop without opening the window.
 
 🚀 **Run on system startup**, with an independent "App launch behavior" (preferred mode, start
-automatically, randomize interval) applied on every launch.
+automatically, randomize interval) that can be applied on every launch.
 
-🎨 **Fluent design** with light/dark/system theming, and Windows 11 Settings-style controls.
+🎨 **Fluent design** with light/dark/system theming.
 
 ⚙️ **Settings persist** across runs (`%APPDATA%\MouseUtil\config.json`).
 
