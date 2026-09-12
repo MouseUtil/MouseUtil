@@ -1,8 +1,8 @@
 # MouseUtil
 
-**MouseUtil** is a lightweight Windows utility that keeps your mouse "active" by clicking or
-jiggling/moving in place, so your PC doesn't go idle, lock, or sleep during long calls,
-downloads, or AFK sessions.
+MouseUtil is a lightweight Windows utility with two main tools, an auto clicker and a mouse jiggler,
+that can automate simple interactions or repetitive tasks and keep your PC active during long waits
+or AFK sessions.
 
 ![MouseUtil](Assets/hero.gif)
 
