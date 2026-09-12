@@ -36,6 +36,10 @@ downloads, or AFK sessions.
 - 🎨 Fluent design with light/dark/system theming, and Windows 11 Settings-style controls.
 - ⚙️ Settings persist across runs (`%APPDATA%\MouseUtil\config.json`).
 
+### Notes
+
+📦 **Unsigned installer**: Windows Defender SmartScreen may warn the first time you run it.
+
 ⚠️ **Fair warning**: I'm not a software developer. This project was developed primarily using
 Claude Code, with me directing the architecture, reviewing the generated code, testing, and
 making iterative improvements. All code in this repository has been reviewed before release. The
@@ -50,14 +54,14 @@ only asset not created with AI is the app icon, which I designed myself.
 
 ```powershell
 dotnet build MouseUtil.csproj -c Debug -p:Platform=x64
-.\bin\x64\Debug\net8.0-windows10.0.19041.0\win-x64\MouseUtil.exe
+.\.output\bin\x64\Debug\net8.0-windows10.0.19041.0\win-x64\MouseUtil.exe
 ```
 
 ## Build the installer
 
 ```powershell
 dotnet build MouseUtil.csproj -c Release -p:Platform=x64
-ISCC.exe installer\MouseUtil.iss
+ISCC.exe .installer-inno\MouseUtil.iss
 ```
 
-Output lands at `installer\Output\MouseUtilSetup.exe`.
+Output lands at `.installer-inno\Output\MouseUtilSetup.exe`.

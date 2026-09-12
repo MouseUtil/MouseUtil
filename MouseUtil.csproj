@@ -24,13 +24,21 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
 
-    <!-- Kept in sync with installer\MouseUtil.iss's MyAppVersion and Package.appxmanifest's Identity
+    <!-- Kept in sync with .installer-inno\MouseUtil.iss's MyAppVersion and Package.appxmanifest's Identity
          Version - shown in the Settings overlay header (see MainWindow.xaml's SettingsVersionText)
          via reflection on the running assembly (MainWindow.GetCurrentVersionString). -->
-    <Version>2.0.0</Version>
+    <Version>2.0.1</Version>
 
     <Authors>MouseUtil</Authors>
     <Company>MouseUtil</Company>
+
+    <!-- Keeps MSIX packaging output out of the repo root, alongside bin/obj - see Directory.Build.props.
+         PlatformSpecificUploadBundleArtifactsListDir must be set too, or a StoreUpload build
+         (UapAppxPackageBuildMode=StoreUpload) writes its Upload\ manifest list back to the repo
+         root instead of following PlatformSpecificBundleArtifactsListDir below. -->
+    <AppxPackageDir>$(MSBuildProjectDirectory)\.output\AppPackages\</AppxPackageDir>
+    <PlatformSpecificBundleArtifactsListDir>$(MSBuildProjectDirectory)\.output\BundleArtifacts\</PlatformSpecificBundleArtifactsListDir>
+    <PlatformSpecificUploadBundleArtifactsListDir>$(MSBuildProjectDirectory)\.output\BundleArtifacts\Upload\</PlatformSpecificUploadBundleArtifactsListDir>
   </PropertyGroup>
 
   <PropertyGroup>

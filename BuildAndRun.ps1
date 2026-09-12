@@ -199,8 +199,8 @@ $rid = $detectedPlatform.ToLower()
 $projectDir = Split-Path (Resolve-Path $Project) -Parent
 if (-not $projectDir) { $projectDir = "." }
 
-# Search for the output folder pattern: bin\<Platform>\<Config>\<tfm>\win-<rid>\
-$binDir = Join-Path $projectDir "bin\$detectedPlatform\$detectedConfig"
+# Search for the output folder pattern: .output\bin\<Platform>\<Config>\<tfm>\win-<rid>\
+$binDir = Join-Path $projectDir ".output\bin\$detectedPlatform\$detectedConfig"
 if (-not (Test-Path $binDir)) {
     Write-Host "WARNING: Build output not found at $binDir -- skipping run" -ForegroundColor Yellow
     exit 0

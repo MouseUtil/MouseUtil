@@ -2,7 +2,21 @@
 
 All notable changes to MouseUtil are documented in this file.
 
-## [2.0.0] [WIP]
+## [2.0.1]
+
+### Fixed
+
+- **Store package was missing several runtime-loaded icon assets** (the in-window title bar icon,
+  the taskbar/Alt-Tab/window-switcher icon, and all three tray icons) - the app appeared to have no
+  icon anywhere once installed from the Store. Root cause: `dotnet build`/`dotnet publish` alone
+  don't stage the full packaged-app payload for this project's `WindowsPackageType=MSIX` setup -
+  they only copy files declared as visual-element logos in `Package.appxmanifest`, silently dropping
+  loose `Assets\` files the app only reads from code at runtime (`app.ico`, `app-18.scale-*.png`,
+  `tray-*.ico`). Packaging now goes through `dotnet publish` with
+  `-p:GenerateAppxPackageOnBuild=true` (equivalent to Visual Studio's "Create App Packages" wizard),
+  which stages the complete payload, including those assets.
+
+## [2.0.0]
 
 This release is a near-total redesign of the app's UI, on top of a handful of behavioral changes.
 This entry describes how the app looks and behaves now, and calls out what differs from 1.3.2.

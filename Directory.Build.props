@@ -1,0 +1,9 @@
+<Project>
+  <!-- Keeps generated build output out of the repo root - see .output/ in .gitignore.
+       Must live here (not inside MouseUtil.csproj) since Directory.Build.props is imported
+       before the SDK computes BaseIntermediateOutputPath/obj paths for restore. -->
+  <PropertyGroup>
+    <BaseOutputPath>$(MSBuildThisFileDirectory).output\bin\</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory).output\obj\</BaseIntermediateOutputPath>
+  </PropertyGroup>
+</Project>
