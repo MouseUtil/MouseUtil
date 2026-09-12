@@ -4,7 +4,7 @@
 jiggling/moving in place, so your PC doesn't go idle, lock, or sleep during long calls,
 downloads, or AFK sessions.
 
-![MouseUtil](Assets/hero.gif)
+
 
 <a href="https://apps.microsoft.com/detail/9NTDCVFVF0SQ?referrer=appbadge&mode=full" target="_blank" rel="noopener noreferrer">
     <picture>
