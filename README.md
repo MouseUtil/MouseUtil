@@ -1,24 +1,34 @@
+<div align="center">
+
 # MouseUtil
 
-MouseUtil is a lightweight Windows utility with two main tools, an auto clicker and a mouse jiggler,
-that can automate simple interactions or repetitive tasks and keep your PC active during long waits
-or AFK sessions.
+Auto Clicker & Mouse Jiggler
+
+</div>
+
+MouseUtil is a lightweight Windows utility with two main tools that can automate simple interactions
+or repetitive tasks and keep your PC active during long waits or AFK sessions.
 
 ![MouseUtil](Assets/hero.gif)
+
+<div align="center">
 
 <a href="https://apps.microsoft.com/detail/9NTDCVFVF0SQ?referrer=appbadge&mode=full" target="_blank" rel="noopener noreferrer">
     <picture>
         <source media="(prefers-color-scheme: dark)" srcset="https://get.microsoft.com/images/en-us%20dark.svg">
-        <img src="https://get.microsoft.com/images/en-us%20light.svg" width="300"/>
+        <img src="https://get.microsoft.com/images/en-us%20light.svg" width="288"/>
     </picture>
 </a>
 
-### Modes
+</div>
 
-- **Auto click** - Automatically clicks where the mouse pointer currently is on the screen.
-- **Jiggle** - Moves the cursor in a tiny circle and lands back on the exact starting pixel.
+## Two modes
 
-### Features and options
+**Auto click** - Automatically clicks where the mouse pointer currently is on the screen.
+
+**Jiggle** - Moves the cursor in a tiny circle and lands back on the exact starting pixel.
+
+## Features and options
 
 ⏱️ **Configurable interval** between actions, shown as Minutes and Seconds (millisecond precision, 3
 decimal places) or broken out into separate Hours/Minutes/Seconds/Milliseconds fields.
@@ -47,7 +57,7 @@ automatically, randomize interval) that can be applied on every launch.
 
 ⚙️ **Settings persist** across runs (`%APPDATA%\MouseUtil\config.json`).
 
-### Notes
+## Notes
 
 ⚠️ **Fair warning**: I'm not a software developer. This project was developed primarily using
 Claude Code, with me directing the architecture, reviewing the generated code, testing, and
