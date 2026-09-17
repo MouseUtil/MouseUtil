@@ -1210,21 +1210,20 @@
                  splash of color rather than a hyperlink cue. Background/BorderBrush stay Transparent
                  with a non-zero BorderThickness so the default ControlTemplate's PointerOver/Pressed
                  states still have something to render into for hover feedback. -->
-            <!-- Three-column header Grid: icon-only Back button (Auto), "Settings" page title taking
-                 the remaining space ("*"), version text pinned to the right edge (Auto) - see
-                 SettingsVersionText, set from GetCurrentVersionString() in the
-                 constructor. The title used to live inside SettingsPanel.xaml itself, above the
-                 Interface card - moved here, next to the back button, so the two read as one unit
-                 instead of the title floating alone in the scrollable content below. Right margin on
-                 this Grid matches SettingsHost's own right Margin below (24) - SettingsOverlay's own
-                 Padding omits the right inset (see its comment above), so without this the version
-                 text would sit flush against the window's true right edge instead of aligning with
-                 the cards' right edge underneath it. -->
+            <!-- Two-column header Grid: icon-only Back button (Auto), "Settings" page title taking
+                 the remaining space ("*"). The title used to live inside SettingsPanel.xaml itself,
+                 above the Interface card - moved here, next to the back button, so the two read as
+                 one unit instead of the title floating alone in the scrollable content below. Right
+                 margin on this Grid matches SettingsHost's own right Margin below (24) - SettingsOverlay's
+                 own Padding omits the right inset (see its comment above), so without this the title
+                 would sit flush against the window's true right edge instead of aligning with the
+                 cards' right edge underneath it. The version used to be shown here too
+                 (SettingsVersionText) - removed in favor of SettingsPanel's own About card, which
+                 shows it as that card's Description instead. -->
             <Grid Grid.Row="0" Margin="0,0,24,16">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <!-- Padding 6 (up from 2) grows the button's own outer footprint ~22x22 -> ~26x26,
                      while FontSize 12 (down from 16) shrinks the glyph itself back down - a bigger
@@ -1255,13 +1254,6 @@
                     Margin="4,0,0,0"
                     Text="Settings"
                     Style="{StaticResource BodyLargeStrongTextBlockStyle}" />
-                <TextBlock
-                    x:Name="SettingsVersionText"
-                    Grid.Column="2"
-                    VerticalAlignment="Center"
-                    HorizontalAlignment="Right"
-                    FontWeight="Light"
-                    Opacity="0.5" />
             </Grid>
 
             <!-- SettingsHost's right/bottom Margin is where SettingsOverlay's own removed

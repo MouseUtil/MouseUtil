@@ -2,6 +2,35 @@
 
 All notable changes to MouseUtil are documented in this file.
 
+## [2.1.0]
+
+### Added
+
+- **"Backdrop" setting**, alongside Theme, choosing the main window's system backdrop material:
+  Mica (default), Mica Alt, or Acrylic. Theme and Backdrop are now combined into one "Appearance"
+  card (Display section) - Theme moved out of its old standalone expander into a plain dropdown row
+  next to Backdrop's own.
+
+- **"About" card in Settings** (Display section's list end, collapsed by default): shows the app's
+  icon, "By Util Labs", the running version (previously shown as plain text in the Settings header,
+  now removed from there), and links to the GitHub repo and the Windows Community Toolkit repo.
+
+### Changed
+
+- **Theme dropdown's "Follow system" option is now just "System"**, with a matching icon swap.
+- Settings expanders now scroll themselves into view as soon as they're expanded, instead of
+  possibly leaving the newly-revealed content below the fold; expanding About scrolls all the way
+  to the bottom instead, since it's always the last card.
+- **Countdown text under 10 seconds no longer shows a decimal** for "Clicking in Ns", "Jiggling in
+  Ns", and "Resuming in Ns" - whole seconds only now. "Starting in Ns" (Click mode's startup grace)
+  is unchanged and keeps its decimal precision.
+
+### Fixed
+
+- **Taskbar/Start/Alt-Tab icon showing an accent-colored square backplate in Light theme.** The
+  packaged icon assets were missing their Light-theme "unplated" variants, so Windows fell back to
+  the plated icon and drew its own backplate; all required light-unplated sizes have been added.
+
 ## [2.0.1]
 
 ### Fixed

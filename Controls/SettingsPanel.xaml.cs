@@ -2,6 +2,7 @@ using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media.Animation;
 using MouseUtil.Interop;
 using MouseUtil.Services;
 using Windows.ApplicationModel;
@@ -33,6 +34,9 @@ public sealed partial class SettingsPanel : UserControl
     /// <summary>Raised (guarded by _isInitializing) whenever the Theme selection changes, so MainWindow can run ApplyTheme.</summary>
     public event EventHandler<string>? ThemeSelectionChanged;
 
+    /// <summary>Raised (guarded by _isInitializing) whenever the Backdrop selection changes, so MainWindow can run ApplyBackdrop.</summary>
+    public event EventHandler<string>? BackdropSelectionChanged;
+
     /// <summary>Raised whenever "Keep running in system tray" changes, so MainWindow can refresh its own _closeToTray mirror and UpdateTrayIconVisibility.</summary>
     public event EventHandler? CloseToTrayChanged;
 
@@ -47,6 +51,22 @@ public sealed partial class SettingsPanel : UserControl
 
     /// <summary>Raised whenever "Interval display" changes, so MainWindow can swap BasicIntervalRow/AdvancedIntervalRow to match (see MainWindow.UpdateAdvancedIntervalDisplayMode).</summary>
     public event EventHandler? ShowAdvancedIntervalDisplayChanged;
+
+    /// <summary>Raised only when AboutExpander is expanded (never on collapse), so MainWindow can scroll SettingsScrollViewer down to reveal it - SettingsScrollViewer lives in MainWindow.xaml, not in this UserControl, so this can't be done locally.</summary>
+    public event EventHandler? AboutExpanderExpanded;
+
+    /// <summary>
+    /// Raised whenever one of the 5 non-About SettingsExpander cards (InterfaceExpander,
+    /// IntervalDisplayExpander, StopButtonDisplayExpander, PauseOnMovementExpander,
+    /// AppLaunchBehaviorExpander) is expanded - never on collapse, same as AboutExpanderExpanded -
+    /// passing the expander itself so MainWindow can bring it into view within SettingsScrollViewer.
+    /// SettingsScrollViewer lives in MainWindow.xaml, not in this UserControl, so this can't be done
+    /// locally either - see AboutExpanderExpanded's own comment for the same reasoning. Kept as a
+    /// separate event from AboutExpanderExpanded rather than folded into it since AboutExpander's own
+    /// scroll-to-bottom behavior is unconditional, while these 5 just ask the framework to reveal
+    /// them (see MainWindow.ScrollExpanderIntoView) - a different, narrower request.
+    /// </summary>
+    public event EventHandler<FrameworkElement>? SettingsExpanderExpanded;
 
     /// <summary>
     /// MainWindow supplies this so hotkey recording can still go through its GlobalHotkeyService
@@ -87,12 +107,41 @@ public sealed partial class SettingsPanel : UserControl
     private bool _isRecordingHotkey;
     private string _preferredMode = "LastUsed";
 
+    /// <summary>Backing fields for ThemeDropDownButton/BackdropDropDownButton - same reasoning as _preferredMode's own comment (DropDownButton/MenuFlyoutItem have no built-in "currently selected item" concept).</summary>
+    private string _theme = "System";
+    private string _backdrop = "Mica";
+
+    // Captured once at construction from SettingsRootPanel's own XAML-declared ChildrenTransitions -
+    // ResetAfterClose swaps this out to null and back (see its own comment) rather than constructing
+    // a fresh TransitionCollection each time.
+    private readonly TransitionCollection? _reflowTransitions;
+
     public SettingsPanel()
     {
         InitializeComponent();
 
+        _reflowTransitions = SettingsRootPanel.ChildrenTransitions;
+
+        AboutExpander.Expanded += (_, _) => AboutExpanderExpanded?.Invoke(this, EventArgs.Empty);
+
+        InterfaceExpander.Expanded += (s, _) => SettingsExpanderExpanded?.Invoke(this, (FrameworkElement)s!);
+        IntervalDisplayExpander.Expanded += (s, _) => SettingsExpanderExpanded?.Invoke(this, (FrameworkElement)s!);
+        StopButtonDisplayExpander.Expanded += (s, _) => SettingsExpanderExpanded?.Invoke(this, (FrameworkElement)s!);
+        PauseOnMovementExpander.Expanded += (s, _) => SettingsExpanderExpanded?.Invoke(this, (FrameworkElement)s!);
+        AppLaunchBehaviorExpander.Expanded += (s, _) => SettingsExpanderExpanded?.Invoke(this, (FrameworkElement)s!);
+
+        AboutVersionText.Text = $"v{GetCurrentVersionString()}";
+
         LoadFromConfig();
         _ = LoadStartupTaskStateAsync();
+    }
+
+    /// <summary>Reads the running exe's file version, shown in AboutVersionText - same technique as MainWindow.GetCurrentVersionString.</summary>
+    private static string GetCurrentVersionString()
+    {
+        var assembly = System.Reflection.Assembly.GetExecutingAssembly();
+        var fileVersion = System.Diagnostics.FileVersionInfo.GetVersionInfo(assembly.Location).ProductVersion;
+        return !string.IsNullOrWhiteSpace(fileVersion) ? fileVersion : assembly.GetName().Version?.ToString() ?? "unknown";
     }
 
     private void LoadFromConfig()
@@ -134,13 +183,11 @@ public sealed partial class SettingsPanel : UserControl
         _hotkeyKey = config.HotkeyKey;
         HotkeyButtonLabel.Text = FormatHotkey(_hotkeyModifiers, _hotkeyKey);
 
-        (config.Theme switch
-        {
-            "Light" => ThemeLightRadioButton,
-            "Dark" => ThemeDarkRadioButton,
-            _ => ThemeSystemRadioButton
-        }).IsChecked = true;
-        UpdateThemeExpanderDescription();
+        _theme = config.Theme;
+        _backdrop = config.Backdrop;
+        ThemeDropDownButton.Content = FormatTheme(_theme);
+        BackdropDropDownButton.Content = FormatBackdrop(_backdrop);
+        UpdateInterfaceExpanderHeader();
 
         _isInitializing = false;
     }
@@ -173,28 +220,13 @@ public sealed partial class SettingsPanel : UserControl
     }
 
     /// <summary>
-    /// Also drives ThemeExpanderIcon's Glyph - System keeps the expander's own XAML-declared
-    /// default ("Color") icon; Light/Dark switch to the same per-mode sun/moon icons
-    /// ThemeLightItem/ThemeDarkItem used before Theme's options became plain RadioButtons.
+    /// Sets InterfaceExpander's collapsed Description to both current selections. HeaderIcon is NOT
+    /// touched here - it stays at its plain XAML-declared static glyph regardless of which Theme/
+    /// Backdrop option is selected (a deliberate choice - the icon does not track Theme the way it
+    /// used to under the old, now-removed ThemeExpander).
     /// </summary>
-    private void UpdateThemeExpanderDescription()
-    {
-        if (ThemeLightRadioButton.IsChecked == true)
-        {
-            ThemeExpander.Description = "Light";
-            ThemeExpanderIcon.Glyph = "";
-        }
-        else if (ThemeDarkRadioButton.IsChecked == true)
-        {
-            ThemeExpander.Description = "Dark";
-            ThemeExpanderIcon.Glyph = "";
-        }
-        else
-        {
-            ThemeExpander.Description = "Follow system";
-            ThemeExpanderIcon.Glyph = "";
-        }
-    }
+    private void UpdateInterfaceExpanderHeader() =>
+        InterfaceExpander.Description = $"{FormatTheme(_theme)}, {FormatBackdrop(_backdrop)}";
 
     private void UpdateIntervalDisplayExpanderDescription() =>
         IntervalDisplayExpander.Description = IntervalDisplayAdvancedRadioButton.IsChecked == true
@@ -263,22 +295,61 @@ public sealed partial class SettingsPanel : UserControl
     /// user left it: collapses every expandable card, and clears the startup-task error banner (see
     /// StartWithWindowsToggle_Toggled) rather than leaving a stale error sitting there until the app
     /// is relaunched. Deliberately delayed rather than run immediately like HandleHostClosing does,
-    /// so none of this is visible mid-slide - the expander collapse also sidesteps a real gap in
-    /// SettingsExpander itself (confirmed against the installed
+    /// so none of this is visible mid-slide - not just to hide an animation, but to hide the change
+    /// happening at all (animated or not): the same reasoning applies to why the collapses below are
+    /// forced to be instant rather than left to animate (see the ChildrenTransitions swap), since an
+    /// instant snap done too early would be just as visible mid-slide as an animated one. The expander
+    /// collapse also sidesteps a real gap in SettingsExpander itself (confirmed against the installed
     /// CommunityToolkit.WinUI.Controls.SettingsControls source): disabling an expander while
     /// automation is running only blocks its chevron's clicks, it doesn't collapse anything, so one
     /// left open when automation starts would otherwise stay frozen open with no way for the user to
     /// collapse it mid-run - closing Settings already guarantees a fresh, collapsed state instead.
+    ///
+    /// SettingsRootPanel.ChildrenTransitions is set to null here and stays null - NOT restored at the
+    /// end of this method, unlike a first attempt at this fix that did restore it immediately and
+    /// turned out not to work. The reason: SettingsOverlay is already Collapsed by the time this runs,
+    /// and a Collapsed element is excluded from layout entirely, so the Arrange-time repositioning
+    /// RepositionThemeTransition reacts to does NOT happen now, transition attached or not - it's
+    /// deferred until SettingsOverlay becomes Visible again on the next open, which is the first
+    /// moment layout actually catches up on the IsExpanded changes made here. Restoring
+    /// ChildrenTransitions immediately (right here, before that catch-up ever happens) left it
+    /// re-attached by the time the deferred Arrange finally ran on reopen, so the reflow animated
+    /// anyway, in full view - exactly the bug this is meant to fix. Leaving it null here means it's
+    /// still null when that catch-up Arrange finally happens on reopen (see
+    /// PrepareReflowTransitionsForReopen, called from MainWindow.ShowSettingsOverlay), so that
+    /// specific Arrange pass has nothing to animate; only then is the transition restored, so normal
+    /// interactive expand/collapse keeps animating once Settings is actually open.
     /// </summary>
     public void ResetAfterClose()
     {
-        ThemeExpander.IsExpanded = false;
+        SettingsRootPanel.ChildrenTransitions = null;
+
+        InterfaceExpander.IsExpanded = false;
         IntervalDisplayExpander.IsExpanded = false;
         StopButtonDisplayExpander.IsExpanded = false;
         PauseOnMovementExpander.IsExpanded = false;
         AppLaunchBehaviorExpander.IsExpanded = false;
+        AboutExpander.IsExpanded = false;
 
         StartupTaskErrorTextBlock.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// Called by MainWindow's ShowSettingsOverlay right after SettingsOverlay's Visibility flips back
+    /// to Visible (see that method) - forces the layout pass that catches up on whatever IsExpanded
+    /// changes ResetAfterClose made while collapsed (which SettingsOverlay being Collapsed at the time
+    /// deferred - see ResetAfterClose's own comment) to run right now, synchronously, before
+    /// ChildrenTransitions is restored. Since UpdateLayout() blocks until layout is fully settled, and
+    /// this runs before the slide-in animation's first frame is even composited (it's called
+    /// synchronously right after AnimatePanelTransition kicks that animation off), the catch-up
+    /// reflow finishes with nothing yet on screen to show it happening. Only once that's done is
+    /// ChildrenTransitions restored, so any actual interactive expand/collapse from here on still
+    /// animates normally.
+    /// </summary>
+    public void PrepareReflowTransitionsForReopen()
+    {
+        UpdateLayout();
+        SettingsRootPanel.ChildrenTransitions = _reflowTransitions;
     }
 
     /// <summary>Flips PauseOnMovementToggle (the master switch) - used by MainWindow's tray "Pause on movement" context menu item so PauseOnMovementToggle_Toggled remains the single place that persists/raises the change.</summary>
@@ -338,7 +409,7 @@ public sealed partial class SettingsPanel : UserControl
     /// the Storyboard.
     ///
     /// Called from MainWindow's RootGrid.ActualThemeChanged handler - covers both an explicit Theme
-    /// dropdown change and the OS theme changing while "Follow system" is selected, same as
+    /// dropdown change and the OS theme changing while "System" is selected, same as
     /// UpdateModeIndicators/UpdateRandomizeIntervalIndicator's own reason for hooking that event. That
     /// same handler also calls RefreshToggleSwitchDisabledVisual directly (it's internal, not private,
     /// for exactly this) for MainWindow's own AutoStopToggle - a native ToggleSwitch outside
@@ -570,18 +641,29 @@ public sealed partial class SettingsPanel : UserControl
         }
     }
 
-    private void ThemeRadioButton_Checked(object sender, RoutedEventArgs e)
+    /// <summary>No _isInitializing guard needed - same reasoning as PreferredModeMenuFlyoutItem_Click's own doc comment.</summary>
+    private void ThemeMenuFlyoutItem_Click(object sender, RoutedEventArgs e)
     {
-        if (_isInitializing)
+        if (sender is MenuFlyoutItem { Tag: string theme })
         {
-            return;
-        }
-
-        if (sender is RadioButton { Tag: string theme })
-        {
+            _theme = theme;
+            ThemeDropDownButton.Content = FormatTheme(theme);
+            UpdateInterfaceExpanderHeader();
             ThemeSelectionChanged?.Invoke(this, theme);
             ConfigService.Update(c => c.Theme = theme);
-            UpdateThemeExpanderDescription();
+        }
+    }
+
+    /// <summary>No _isInitializing guard needed - same reasoning as PreferredModeMenuFlyoutItem_Click's own doc comment.</summary>
+    private void BackdropMenuFlyoutItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuFlyoutItem { Tag: string backdrop })
+        {
+            _backdrop = backdrop;
+            BackdropDropDownButton.Content = FormatBackdrop(backdrop);
+            UpdateInterfaceExpanderHeader();
+            BackdropSelectionChanged?.Invoke(this, backdrop);
+            ConfigService.Update(c => c.Backdrop = backdrop);
         }
     }
 
@@ -738,6 +820,20 @@ public sealed partial class SettingsPanel : UserControl
         "Click" => "Auto click",
         "Jiggle" => "Jiggle",
         _ => "Last used"
+    };
+
+    private static string FormatTheme(string theme) => theme switch
+    {
+        "Light" => "Light",
+        "Dark" => "Dark",
+        _ => "System"
+    };
+
+    private static string FormatBackdrop(string backdrop) => backdrop switch
+    {
+        "MicaAlt" => "Mica Alt",
+        "Acrylic" => "Acrylic",
+        _ => "Mica"
     };
 
 }

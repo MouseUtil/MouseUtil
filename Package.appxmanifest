@@ -15,7 +15,7 @@
   <Identity
     Name="UtilLabs.MouseUtil"
     Publisher="CN=BDF9BFD8-45F7-49F8-B51C-359A6C1E5927"
-    Version="2.0.1.0" />
+    Version="2.1.0.0" />
 
   <Properties>
     <DisplayName>MouseUtil</DisplayName>

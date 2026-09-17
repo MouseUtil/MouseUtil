@@ -1,5 +1,6 @@
 ﻿using Microsoft.UI;
 using Microsoft.UI.Composition;
+using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -275,8 +276,11 @@ public sealed partial class MainWindow : Window
         // differs for Debug builds specifically so a Debug build can run alongside an installed
         // Release build without either treating the other as a duplicate instance of itself.
         Title = SingleInstanceService.MainWindowTitle;
-        SystemBackdrop = new MicaBackdrop();
 
+        // No fallback SystemBackdrop assignment here - LoadConfigIntoUi (called below, still inside
+        // this constructor, before the window is ever shown) always calls ApplyBackdrop with
+        // the persisted (or default "Mica") preference, so an earlier assignment here would just be
+        // redundant dead code, immediately overwritten before paint.
         ConfigureWindowSizingAndMaximizeBehavior();
 
         ExtendsContentIntoTitleBar = true;
@@ -300,7 +304,6 @@ public sealed partial class MainWindow : Window
         // alongside interval setup. No decimal point allowed here at all (this field is always a whole
         // count), and 8 matches its own Maximum's digit count (99999999).
         SetInputBoxMaxLength(AutoStopCountBox, maxLength: 8, allowDecimalPoint: false);
-        SettingsVersionText.Text = $"v{GetCurrentVersionString()}";
         UpdateTitleBarCaptionSpacer();
 
         // MouseUtil.csproj's <ApplicationIcon> only embeds this icon into the compiled exe's PE
@@ -417,6 +420,7 @@ public sealed partial class MainWindow : Window
         _settingsPanel.UnregisterHotkey = () => _hotkeyService.Unregister();
 
         _settingsPanel.ThemeSelectionChanged += (_, theme) => ApplyTheme(theme);
+        _settingsPanel.BackdropSelectionChanged += (_, backdrop) => ApplyBackdrop(backdrop);
         _settingsPanel.CloseToTrayChanged += (_, _) =>
         {
             _closeToTray = _settingsPanel.CloseToTray;
@@ -433,16 +437,14 @@ public sealed partial class MainWindow : Window
         _settingsPanel.PauseOnMovementChanged += (_, _) => ResetStatusToOffIfNotRunning();
         _settingsPanel.StopButtonDisplayChanged += (_, _) => UpdatePowerButtonRunningDisplay();
         _settingsPanel.ShowAdvancedIntervalDisplayChanged += (_, _) => UpdateAdvancedIntervalDisplayMode();
+        _settingsPanel.AboutExpanderExpanded += (_, _) =>
+        {
+            SettingsScrollViewer.UpdateLayout();
+            SettingsScrollViewer.ChangeView(null, SettingsScrollViewer.ScrollableHeight, null);
+        };
+        _settingsPanel.SettingsExpanderExpanded += (_, expander) => ScrollExpanderIntoView(expander);
 
         SettingsHost.Children.Add(_settingsPanel);
-    }
-
-    /// <summary>Reads the running exe's file version, shown in Settings' SettingsVersionText.</summary>
-    private static string GetCurrentVersionString()
-    {
-        var assembly = System.Reflection.Assembly.GetExecutingAssembly();
-        var fileVersion = System.Diagnostics.FileVersionInfo.GetVersionInfo(assembly.Location).ProductVersion;
-        return !string.IsNullOrWhiteSpace(fileVersion) ? fileVersion : assembly.GetName().Version?.ToString() ?? "unknown";
     }
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e) => ShowSettingsOverlay();
@@ -457,6 +459,12 @@ public sealed partial class MainWindow : Window
     /// here and in SettingsBackButton_Click - removed because it caused SettingsButton to pop in
     /// abruptly right at the end of the slide-back animation instead of sliding into place smoothly
     /// with the rest of MainContentGrid's content like everything else in it.
+    ///
+    /// _settingsPanel.PrepareReflowTransitionsForReopen() runs right after AnimatePanelTransition
+    /// returns - by then SettingsOverlay.Visibility has already synchronously flipped to Visible
+    /// (AnimatePanelTransition's own first line), even though the slide-in animation itself is only
+    /// just starting - see that method's own comment for why this exact timing is what lets it catch
+    /// up on ResetAfterClose's collapses invisibly instead of animating them into view.
     /// </summary>
     private void ShowSettingsOverlay()
     {
@@ -470,6 +478,8 @@ public sealed partial class MainWindow : Window
         // method's own comment for why a Collapsed element can't be animated in the first place).
         AnimatePanelTransition(outgoing: MainContentGrid, incoming: SettingsOverlay, reverse: false,
             onCompleted: () => SettingsBackButton.Focus(FocusState.Programmatic));
+
+        _settingsPanel.PrepareReflowTransitionsForReopen();
     }
 
     /// <summary>
@@ -481,8 +491,10 @@ public sealed partial class MainWindow : Window
     /// _settingsPanel.ResetAfterClose() (collapses every expander, clears the startup-task error
     /// banner) here - not on the next open - so Settings always starts fresh however the user left it,
     /// however it - delayed 300ms (matching AnimatePanelTransition's own slide duration - see its own
-    /// `duration`) rather than reset immediately, so none of that happens until the overlay has fully
-    /// slid off screen instead of being visible mid-slide. disableAnimation is still true on the ChangeView
+    /// `duration`) rather than reset immediately, so none of that is visible mid-slide. The delay isn't
+    /// there to hide an animation specifically - it's there to hide the reset happening at all, whether
+    /// animated or instant (see ResetAfterClose's own comment on why the expander collapses it triggers
+    /// are forced instant rather than left to animate). disableAnimation is still true on the ChangeView
     /// itself since by the time it fires there's nothing left on screen for an animated scroll to show.
     /// </summary>
     private async void SettingsBackButton_Click(object sender, RoutedEventArgs e)
@@ -500,6 +512,22 @@ public sealed partial class MainWindow : Window
         await Task.Delay(300);
         SettingsScrollViewer.ChangeView(null, 0, null, disableAnimation: true);
         _settingsPanel.ResetAfterClose();
+    }
+
+    /// <summary>
+    /// Reveals `expander` (one of the 6 non-About SettingsExpander cards - see
+    /// SettingsPanel.SettingsExpanderExpanded) after it expands, via the platform's own native
+    /// bring-into-view support rather than hand-rolled scroll-offset math: ScrollViewer (like any
+    /// scrollable container) already participates in the standard XAML bring-into-view protocol -
+    /// StartBringIntoView() with no options does the minimal scroll necessary to make the whole
+    /// element visible, a no-op if it's already fully visible. UpdateLayout() first still forces the
+    /// just-expanded content's new height to be reflected before StartBringIntoView measures it -
+    /// same reason AboutExpanderExpanded's handler calls it.
+    /// </summary>
+    private void ScrollExpanderIntoView(FrameworkElement expander)
+    {
+        SettingsScrollViewer.UpdateLayout();
+        expander.StartBringIntoView();
     }
 
     /// <summary>
@@ -922,6 +950,7 @@ public sealed partial class MainWindow : Window
         UpdateAdvancedIntervalDisplayMode();
 
         ApplyTheme(config.Theme);
+        ApplyBackdrop(config.Backdrop);
 
         // _settingsPanel.PreferredMode ("LastUsed" by default) can force a specific mode at launch
         // regardless of LastMode - see AppConfig.PreferredMode's own comment and SettingsPanel's
@@ -961,6 +990,32 @@ public sealed partial class MainWindow : Window
         UpdateTitleBarButtonColors();
     }
 
+    /// <summary>
+    /// Sets the window's SystemBackdrop material from SettingsPanel's "Backdrop" selection
+    /// (config.Backdrop) - Mica/Mica Alt/Acrylic are all real, untinted backdrops, so RootGrid.Background
+    /// is explicitly cleared for them (it has no Background set in XAML at all - see the long comment on
+    /// SettingsOverlay, ~line 1175, explaining why AppTitleBarGrid/SettingsOverlay are deliberately left
+    /// the same way so Mica/Acrylic show through undisturbed).
+    /// </summary>
+    private void ApplyBackdrop(string preference)
+    {
+        switch (preference)
+        {
+            case "MicaAlt":
+                RootGrid.Background = null;
+                SystemBackdrop = new MicaBackdrop { Kind = MicaKind.BaseAlt };
+                break;
+            case "Acrylic":
+                RootGrid.Background = null;
+                SystemBackdrop = new DesktopAcrylicBackdrop();
+                break;
+            default:
+                RootGrid.Background = null;
+                SystemBackdrop = new MicaBackdrop { Kind = MicaKind.Base };
+                break;
+        }
+    }
+
     private void UpdateTitleBarButtonColors()
     {
         var isDark = RootGrid.ActualTheme == ElementTheme.Dark;
@@ -990,15 +1045,19 @@ public sealed partial class MainWindow : Window
         UpdatePowerButtonRunningDisplay();
     }
 
+    /// <summary>
+    /// UISettings.ColorValuesChanged fires for a live OS theme flip (Light/Dark/high-contrast) - only
+    /// relevant here while "System" is selected, since an explicit Light/Dark Theme choice already
+    /// has its own colors applied by ApplyTheme and doesn't need refreshing just because the OS theme
+    /// moved out from under an unrelated in-app selection. Fires on a non-UI thread, so must marshal back
+    /// before touching the title bar / XAML tree.
+    /// </summary>
     private void UiSettings_ColorValuesChanged(UISettings sender, object args)
     {
-        if (_themePreference != "System")
+        if (_themePreference == "System")
         {
-            return;
+            DispatcherQueue.TryEnqueue(UpdateTitleBarButtonColors);
         }
-
-        // Fires on a non-UI thread - must marshal back before touching the title bar / XAML tree.
-        DispatcherQueue.TryEnqueue(UpdateTitleBarButtonColors);
     }
 
     /// <summary>
@@ -1730,7 +1789,7 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private string GetPausedStatusPhrase() =>
         _lastEngineStatusRemaining.HasValue
-            ? MouseAutomationEngine.FormatCountdownStatus("Resuming now", _lastEngineStatusRemaining.Value, $"Resuming in {MouseAutomationEngine.FormatSeconds(_lastEngineStatusRemaining.Value)}")
+            ? MouseAutomationEngine.FormatCountdownStatus("Resuming now", _lastEngineStatusRemaining.Value, $"Resuming in {MouseAutomationEngine.FormatSeconds(_lastEngineStatusRemaining.Value, showTenths: false)}")
             : "Paused";
 
     /// <summary>
@@ -1809,8 +1868,8 @@ public sealed partial class MainWindow : Window
     // text shaded on top (GetAlternateButtonForeground). Starting is simplest: both methods read
     // SuccessBrushSource's plain green, unadjusted. Paused is where they diverge: the background's base
     // color itself differs by theme (raw SystemAccentColor in Light, AccentFillColorDefaultBrush's
-    // Windows-adjusted "brighter" Fill variant in Dark - see GetAlternateButtonBackground's own doc
-    // comment for why), while the foreground always swaps in its own separately-tuned live brush
+    // Windows-adjusted "brighter" Fill variant in Dark - via GetAccentColorForTheme, see that method's
+    // own doc comment for why), while the foreground always swaps in its own separately-tuned live brush
     // regardless of theme (AccentBrushSource's AccentTextFillColorPrimaryBrush) for legibility as text -
     // deliberately never matching the background's base color exactly, since text and background need to
     // stay visually distinct from each other, not collapse into the same shaded tone. SuccessBrushSource
@@ -1833,16 +1892,10 @@ public sealed partial class MainWindow : Window
     /// <summary>
     /// PowerToggleAlternateButton's translucent background - the state's own base color at real
     /// PausedButtonBackgroundOpacity alpha, no opaque layer underneath at all. Starting always uses
-    /// SuccessBrushSource's plain green (see the colorway comment above). Paused differs by theme: Light
-    /// reads Application.Current.Resources["SystemAccentColor"] directly - pure, unadjusted accent, tried
-    /// and preferred by eye over the Windows-tuned "Fill" variant here (SystemAccentColor has no Light/Dark
-    /// ThemeDictionary scoping, confirmed by reading the installed WinUI SDK's generic.xaml directly, so a
-    /// flat Resources[] indexer lookup is reliable for it regardless of theme) - while Dark reads
-    /// AccentFillBrushSource.Foreground (ThemeResource AccentFillColorDefaultBrush), the same
-    /// Windows-adjusted "brighter" Fill-purposed shade tried for both themes at one point (see git history
-    /// on this branch), kept for Dark specifically once Light turned out to read better with the plain raw
-    /// color instead. Either way, this color never renders at full solid strength (see the translucency
-    /// below), and GetAlternateButtonForeground's text still needs its own, separately-tuned source
+    /// SuccessBrushSource's plain green (see the colorway comment above). Paused reads
+    /// GetAccentColorForTheme(), the shared per-theme accent-color lookup (see that method's own doc
+    /// comment). Either way, this color never renders at full solid strength (see the translucency below), and
+    /// GetAlternateButtonForeground's text still needs its own, separately-tuned source
     /// (AccentTextFillColorPrimaryBrush) to read well on top of it regardless of which background variant
     /// is active - matching that text color exactly here was tried early on and didn't look good, since
     /// text and background need to stay visually distinct from each other, not collapse into the same
@@ -1862,12 +1915,26 @@ public sealed partial class MainWindow : Window
     private Color GetAlternateButtonBackground(AlternateButtonState state)
     {
         var tintedColor = state == AlternateButtonState.Paused
-            ? (RootGrid.ActualTheme == ElementTheme.Dark
-                ? ((SolidColorBrush)AccentFillBrushSource.Foreground).Color
-                : (Color)Application.Current.Resources["SystemAccentColor"])
+            ? GetAccentColorForTheme()
             : ((SolidColorBrush)SuccessBrushSource.Foreground).Color;
         return Color.FromArgb((byte)Math.Round(255 * PausedButtonBackgroundOpacity), tintedColor.R, tintedColor.G, tintedColor.B);
     }
+
+    /// <summary>
+    /// Shared per-theme Windows accent-color lookup - used by GetAlternateButtonBackground's Paused tint
+    /// above. Light reads Application.Current.Resources["SystemAccentColor"] directly - pure, unadjusted
+    /// accent, tried and preferred by eye over the Windows-tuned "Fill" variant here (SystemAccentColor
+    /// has no Light/Dark ThemeDictionary scoping, confirmed by reading the installed WinUI SDK's
+    /// generic.xaml directly, so a flat Resources[] indexer lookup is reliable for it regardless of
+    /// theme) - while Dark reads AccentFillBrushSource.Foreground (ThemeResource
+    /// AccentFillColorDefaultBrush), the same Windows-adjusted "brighter" Fill-purposed shade tried for
+    /// both themes at one point (see git history on this branch), kept for Dark specifically once Light
+    /// turned out to read better with the plain raw color instead.
+    /// </summary>
+    private Color GetAccentColorForTheme() =>
+        RootGrid.ActualTheme == ElementTheme.Dark
+            ? ((SolidColorBrush)AccentFillBrushSource.Foreground).Color
+            : (Color)Application.Current.Resources["SystemAccentColor"];
 
     /// <summary>
     /// PowerToggleAlternateButton's icon/label Foreground, per state - both read a live, already-theme-
@@ -1918,23 +1985,6 @@ public sealed partial class MainWindow : Window
             (byte)Math.Clamp(color.R * (1 - amount), 0, 255),
             (byte)Math.Clamp(color.G * (1 - amount), 0, 255),
             (byte)Math.Clamp(color.B * (1 - amount), 0, 255));
-
-    /// <summary>
-    /// Standard "alpha-over" compositing formula, computed by hand and returned fully opaque (A=255) -
-    /// simulates translucency as a flat color instead of relying on real GPU alpha blending, for whenever
-    /// what's actually behind an element at render time is unpredictable (see MainWindow.xaml's comment on
-    /// PowerToggleAlternateButton for the real bug this solved once). Currently unused -
-    /// GetAlternateButtonBackground uses genuine alpha transparency instead, now that
-    /// PowerToggleAlternateButton is a wholly independent element with a stable, predictable backdrop
-    /// behind it - kept here in case a future need for this trick comes up again for some other
-    /// unpredictable-backdrop case.
-    /// </summary>
-    private static Color BlendOver(Color background, Color foreground, double foregroundOpacity) =>
-        Color.FromArgb(
-            255,
-            (byte)Math.Round(background.R * (1 - foregroundOpacity) + foreground.R * foregroundOpacity),
-            (byte)Math.Round(background.G * (1 - foregroundOpacity) + foreground.G * foregroundOpacity),
-            (byte)Math.Round(background.B * (1 - foregroundOpacity) + foreground.B * foregroundOpacity));
 
     /// <summary>
     /// Formats a completed-action count as "{count} click"/"{count} clicks" (Click mode) or

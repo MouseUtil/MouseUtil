@@ -322,7 +322,7 @@ public sealed class MouseAutomationEngine
                         if (stillness >= StillnessDisplayThreshold)
                         {
                             var resumeRemaining = interval - stillness;
-                            ReportStatus(FormatCountdownStatus($"{verb} now", resumeRemaining, $"Paused... Resuming in {FormatSeconds(resumeRemaining)}"), StatusKind.Paused, remaining: resumeRemaining);
+                            ReportStatus(FormatCountdownStatus($"{verb} now", resumeRemaining, $"Paused... Resuming in {FormatSeconds(resumeRemaining, showTenths: false)}"), StatusKind.Paused, remaining: resumeRemaining);
                         }
                         else
                         {
@@ -349,7 +349,7 @@ public sealed class MouseAutomationEngine
 
                 var kind = remaining <= ImminentThreshold ? StatusKind.Imminent : StatusKind.Running;
                 var progress = remaining.TotalMilliseconds / effectiveInterval.TotalMilliseconds;
-                ReportStatus(FormatCountdownStatus($"{verb} now", remaining, $"{verb} in {FormatSeconds(remaining)}"), kind, progress, remaining);
+                ReportStatus(FormatCountdownStatus($"{verb} now", remaining, $"{verb} in {FormatSeconds(remaining, showTenths: false)}"), kind, progress, remaining);
 
                 var sleepMs = (int)Math.Min(TickMilliseconds, remaining.TotalMilliseconds);
                 if (sleepMs > 0)
@@ -543,13 +543,17 @@ public sealed class MouseAutomationEngine
     /// -> "1m 30s", 3900s -> "1h 5m 0s". Purely a display choice - the underlying countdown value
     /// and its tick rate are untouched, this only changes how it's rendered once it gets long
     /// enough that reading raw seconds becomes hard to parse at a glance.
+    /// <paramref name="showTenths"/> gates the sub-10s "N.Ns" tenths digit specifically - the
+    /// "Starting in Xs" caller (the only one this is still true for) passes the default true,
+    /// while the Clicking/Jiggling/Resuming callers below all pass false so their under-10s tail
+    /// reads as a plain whole-second countdown instead.
     /// </summary>
-    public static string FormatSeconds(TimeSpan t)
+    public static string FormatSeconds(TimeSpan t, bool showTenths = true)
     {
         var totalSeconds = Math.Max(0, t.TotalSeconds);
         if (totalSeconds < 60)
         {
-            return totalSeconds < 9.5 ? $"{totalSeconds:0.0}s" : $"{Math.Ceiling(totalSeconds):0}s";
+            return showTenths && totalSeconds < 9.5 ? $"{totalSeconds:0.0}s" : $"{Math.Ceiling(totalSeconds):0}s";
         }
 
         var wholeSeconds = (long)Math.Ceiling(totalSeconds);

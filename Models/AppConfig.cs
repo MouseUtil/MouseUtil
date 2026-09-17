@@ -73,6 +73,11 @@ public sealed class AppConfig
     // of controlling this from Settings only.
     public bool ShowAdvancedIntervalDisplay { get; set; } = false;
 
+    // Which SystemBackdrop material the main window renders: "Mica" (default), "MicaAlt", or "Acrylic".
+    // Persisted like Theme above, and read at startup by MainWindow.ApplyBackdrop - see SettingsPanel's
+    // "Backdrop" expander.
+    public string Backdrop { get; set; } = "Mica";
+
     // Default OFF: whether automation (Auto click/Jiggle, per PreferredMode below) should start
     // immediately every time the app launches - regardless of whether this particular launch came
     // from Windows startup (see StartupTaskService/StartWithWindowsCard's own comment) or a normal

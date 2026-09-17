@@ -27,7 +27,7 @@
     <!-- Kept in sync with .installer-inno\MouseUtil.iss's MyAppVersion and Package.appxmanifest's Identity
          Version - shown in the Settings overlay header (see MainWindow.xaml's SettingsVersionText)
          via reflection on the running assembly (MainWindow.GetCurrentVersionString). -->
-    <Version>2.0.1</Version>
+    <Version>2.1.0</Version>
 
     <Authors>MouseUtil</Authors>
     <Company>MouseUtil</Company>
