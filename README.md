@@ -53,7 +53,7 @@ and a context menu to start/stop without opening the window.
 🚀 **Run on system startup**, with an independent "App launch behavior" (preferred mode, start
 automatically, randomize interval) that can be applied on every launch.
 
-🎨 **Fluent design** with light/dark/system theming.
+🎨 **Fluent design**, with light/dark/system theming and a Mica/Mica Alt/Acrylic backdrop picker.
 
 ⚙️ **Settings persist** across runs (`%APPDATA%\MouseUtil\config.json`).
 
