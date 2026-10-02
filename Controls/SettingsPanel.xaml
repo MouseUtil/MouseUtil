@@ -7,60 +7,35 @@
 
     <UserControl.Resources>
         <!-- Shared visual language for every section header below (Display/Behavior/System/About) -
-             Title Case, no border/all-caps, matching native Windows 11 Settings' own group-header
-             look now that each row renders its own SettingsCard/SettingsExpander surface instead of
-             being wrapped in one shared CardBorderStyle card per section. -->
+             Title Case, no border/all-caps, matching native Windows 11 Settings' own group-header look. -->
         <Style x:Key="SectionHeaderTextBlockStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyStrongTextBlockStyle}" />
 
-        <!-- MainWindow is fixed at a non-resizable 400 DIP wide (see MainWindow.SizeWindow) - after
-             this panel's own margins/padding, SettingsCard/SettingsExpander's PART_RootGrid only ever
-             gets ~340-360px. CommunityToolkit.WinUI.Controls.SettingsControls' own SettingsCard.xaml
-             (merged into SettingsExpander's template too, for its header row) declares a
-             ControlSizeTrigger on that root Grid keyed off two plain (non-themed) x:Double resources -
-             SettingsCardWrapThreshold (476) and SettingsCardWrapNoIconThreshold (286) - that drop the
-             trailing Content (ToggleSwitch/Button) below the Header/Icon once the control gets
-             narrower than those thresholds. Our content width always falls inside that wrap range, so
-             every row was stacking vertically instead of showing side by side. Overriding both keys
-             here (found higher in the resource-lookup chain than the toolkit's own generic.xaml
-             default, so this wins) with 0 means neither the "RightWrapped" nor the
-             "RightWrappedNoIcon" ControlSizeTrigger can ever match a real (>0) width, leaving the
-             default side-by-side "Right" state permanently active regardless of how narrow the window
-             is - exactly what this app's fixed 400 DIP width needs. -->
+        <!-- MainWindow is fixed at a non-resizable 400 DIP wide, so SettingsCard/SettingsExpander's
+             root Grid only ever gets ~340-360px - inside the toolkit's default ControlSizeTrigger wrap
+             range (SettingsCardWrapThreshold/SettingsCardWrapNoIconThreshold), which would otherwise
+             drop the trailing Content below the Header/Icon instead of showing it side by side.
+             Overriding both keys to 0 here disables that wrap trigger entirely, keeping every row
+             side-by-side regardless of window width. -->
         <x:Double x:Key="SettingsCardWrapThreshold">0</x:Double>
         <x:Double x:Key="SettingsCardWrapNoIconThreshold">0</x:Double>
     </UserControl.Resources>
 
-    <!-- Hosted once inside MainWindow's SettingsOverlay (see SettingsPanel.xaml.cs and
-         MainWindow.xaml's SettingsHost) - a single instance, never duplicated. Rows are grouped
-         into labeled sections, each answering one question for the user rather than grouped by
-         implementation domain (Display: how the app looks/what it shows - Appearance (theme,
-         backdrop), interval display, stop button display, taskbar icon progress; Behavior: the
-         automation itself - hotkey, pause-on-movement, launch behavior; System: OS-level integration
-         - tray, startup task; About), all always visible. Each row
-         is its own CommunityToolkit SettingsCard/
-         SettingsExpander (native Windows 11 Settings look: icon + header side by side, trailing
-         content right-aligned) rather than the previous shared CardBorderStyle-bordered StackPanel
-         per section.
+    <!-- Hosted once inside MainWindow's SettingsOverlay - a single instance, never duplicated. Rows
+         are grouped into labeled sections answering one question each for the user (Display, Behavior,
+         System, About). Each row is its own CommunityToolkit SettingsCard/SettingsExpander (native
+         Windows 11 Settings look: icon + header side by side, trailing content right-aligned).
 
-         Deliberately ONE flat StackPanel (Spacing="4") for every row across every section, instead
-         of a StackPanel-per-section nested inside an outer one: RepositionThemeTransition (see
-         ChildrenTransitions below) only animates repositioning among a single panel's own direct
-         children, so nesting would mean either two separately-timed reflow animations (cards within
-         an expanding card's own section, and whole sections relative to each other) or duplicating
-         the transition on every nested panel - both read as the list reflowing in visually separate
-         pieces rather than one continuous motion. One flat panel with one RepositionThemeTransition
-         instead makes everything below an expanding/collapsing card - the rest of its own section,
-         and every section after it - slide together as a single group. The 16px gap between
-         sections (vs. 4px within one) is reproduced via each non-first section header's own top
-         Margin rather than an outer panel's wider Spacing - see each header TextBlock's Margin
-         below. -->
+         Deliberately ONE flat StackPanel (Spacing="4") for every row across every section, not a
+         StackPanel-per-section nested inside an outer one: RepositionThemeTransition only animates
+         repositioning among a single panel's own direct children, so a flat panel makes everything
+         below an expanding/collapsing card slide together as one group instead of reflowing in
+         separate pieces. The 16px gap between sections is reproduced via each section header's own
+         top Margin rather than a wider outer Spacing. -->
     <StackPanel x:Name="SettingsRootPanel" Spacing="4">
         <StackPanel.ChildrenTransitions>
             <TransitionCollection>
-                <!-- IsStaggeringEnabled defaults to True, which delays each repositioned sibling's
-                     animation by its index - meant for a ListView's cascading item-reveal look, but
-                     here it makes cards below an expanding/collapsing one appear to slide down
-                     separately rather than together. False makes every affected sibling animate at
+                <!-- IsStaggeringEnabled defaults to True (delays each sibling's animation by index,
+                     meant for a ListView cascade) - False makes every affected sibling animate at
                      once, as a single moving group. -->
                 <RepositionThemeTransition IsStaggeringEnabled="False" />
             </TransitionCollection>
@@ -70,16 +45,10 @@
         <TextBlock Text="Display" Style="{StaticResource SectionHeaderTextBlockStyle}" Margin="0,0,0,4" />
 
         <!-- Appearance: Theme + Backdrop, combined into one expander since neither reads as distinct
-             enough on its own to earn a section-level card of its own. Each is a plain DropDownButton
-             row (SettingsCard Header + trailing DropDownButton/MenuFlyout) matching
-             AppLaunchBehaviorExpander's own Items rows below (e.g. "Preferred mode") - not the shared
-             RadioButton-list style this used to use before Theme and Backdrop were merged into one
-             card (see git history on this branch). HeaderIcon reuses Backdrop's own former static
-             glyph (E771) - deliberately NOT swapped live to track the current Theme selection the
-             way ThemeExpanderIcon used to under the old, now-removed ThemeExpander (see
-             UpdateInterfaceExpanderHeader's own comment). Description mirrors both current
-             selections so the collapsed header still communicates them at a glance. IsExpanded="False"
-             - the standing requirement every expander in this file starts collapsed. -->
+             enough on its own to earn a section-level card. Each is a plain DropDownButton row.
+             HeaderIcon is a static glyph, deliberately not swapped live to track the Theme selection.
+             Description mirrors both current selections so the collapsed header communicates them
+             at a glance. -->
         <settings:SettingsExpander
             x:Name="InterfaceExpander"
             Header="Appearance"
@@ -90,8 +59,7 @@
             </settings:SettingsExpander.HeaderIcon>
             <settings:SettingsExpander.Items>
                 <!-- No per-option icons on this row itself - see the System/Light/Dark
-                     MenuFlyoutItem.Icon glyphs below instead. InterfaceExpander's own HeaderIcon
-                     above is a plain static glyph, unrelated to these. -->
+                     MenuFlyoutItem.Icon glyphs below instead. -->
                 <settings:SettingsCard Header="Theme" Padding="18,8,16,8" AutomationProperties.AutomationId="ThemeCard">
                     <DropDownButton
                         x:Name="ThemeDropDownButton"
@@ -135,13 +103,10 @@
             </settings:SettingsExpander.Items>
         </settings:SettingsExpander>
 
-        <!-- Interval display: Basic/Advanced as RadioButtons - directly controls whether Advanced
-             interval display mode is active in MainWindow's Interval card (swapping
-             BasicIntervalRow/AdvancedIntervalRow - see MainWindow.UpdateAdvancedIntervalDisplayMode,
-             driven here via ShowAdvancedIntervalDisplayChanged), persisted as
-             config.ShowAdvancedIntervalDisplay. Disabled while automation is running (see
-             SetInputsEnabled below), same as PauseOnMovementCard and for the same reason: the
-             interval fields this switches between are themselves locked while running. -->
+        <!-- Interval display: Basic/Advanced as RadioButtons - controls whether Advanced interval
+             display mode is active in MainWindow's Interval card, persisted as
+             config.ShowAdvancedIntervalDisplay. Disabled while automation is running, same as
+             PauseOnMovementCard - the interval fields this switches between are locked while running. -->
         <settings:SettingsExpander
             x:Name="IntervalDisplayExpander"
             Header="Interval display"
@@ -150,56 +115,18 @@
             <settings:SettingsExpander.HeaderIcon>
                 <SymbolIcon Symbol="Clock" />
             </settings:SettingsExpander.HeaderIcon>
-            <!-- Plain RadioButtons (Content IS the option's own label, so the circle sits directly
-                 to the left of its caption, the normal way) grouped in one shared, Header-less
-                 SettingsCard as the Items entry - NOT bare RadioButtons/a bare StackPanel directly
-                 as the Items child.
+            <!-- Plain RadioButtons grouped in one shared, Header-less SettingsCard as the Items entry
+                 - NOT bare RadioButtons/a bare StackPanel directly as the Items child. This matters:
+                 SettingsExpander.Items applies a SettingsCard-targeted style to the container of every
+                 Items child regardless of what it actually is - a bare RadioButton/CheckBox/StackPanel
+                 crashes the app natively (STATUS_FATAL_USER_CALLBACK_EXCEPTION) the instant the item is
+                 realized. Only wrapping in an actual SettingsCard avoids it.
 
-                 That distinction matters a lot more than it looks: SettingsExpander.Items applies
-                 an ItemContainerStyleSelector whose styles (DefaultSettingsExpanderItemStyle /
-                 ClickableSettingsExpanderItemStyle in the toolkit's own SettingsExpander.xaml) are
-                 TargetType="SettingsCard" - handed to the container of EVERY Items child
-                 regardless of what that child actually is. A bare RadioButton (or CheckBox, or a
-                 StackPanel wrapping either - confirmed by directly swapping each of these in and
-                 re-testing) as an Items child crashes the app natively
-                 (STATUS_FATAL_USER_CALLBACK_EXCEPTION / 0xC000041D, always faulting inside
-                 Microsoft.UI.Xaml.dll at the same offset per Windows Event Log) the instant that
-                 item is realized, i.e. the moment this expander is first expanded - because a
-                 SettingsCard-TargetType Style is being applied to a container that isn't one.
-                 RadioButton itself, its GroupName-based grouping, and having multiple Items
-                 entries were all independently ruled out by testing (CheckBox reproduces
-                 identically; a single ungrouped item still crashes) - only wrapping in an actual
-                 SettingsCard fixes it.
-
-                 Deliberately ONE shared SettingsCard around all option RadioButtons (not one
-                 SettingsCard per option) - avoids reintroducing the "pseudo-card per option" chrome
-                 this restructuring was meant to get rid of in the first place.
-
-                 Padding="12,8,12,8" overrides the container style's own default
-                 SettingsExpanderItemPadding (58,8,44,8 - reserves 58px on the left for an icon
-                 column this row has no use for). 12px left/right reads as a normal, evenly-padded
-                 card row (close to SettingsCardPadding's own default of 16 uniform, used by every
-                 other plain SettingsCard in this file - HotkeyCard/CloseToTrayCard/etc. - just
-                 slightly tighter since this card nests one level deeper, inside an already-padded
-                 expander, at this app's fixed narrow ~340-360px width) - not the oversized 58/44
-                 indent, and not 0 either (flush-left with zero Padding read as too cramped/
-                 unbalanced against the card's own edge in testing). Left and right are the same
-                 value on purpose: with ContentAlignment="Left" below, Padding.Right doesn't get
-                 "used up" by content the way Padding.Left does (content stops at its own natural
-                 width, well short of the right edge), so matching the two numbers is what makes
-                 the row actually read as symmetrically padded rather than the apparent right-side
-                 gap being literally mirrored (that gap is unused stretch space, not Padding, and
-                 mirroring its raw size would push content back toward the right again).
-
-                 ContentAlignment="Left" is required too, separately from Padding: SettingsCard's
-                 default ContentAlignment ("Right") right-aligns whatever's in its Content slot,
-                 which is normally correct for a trailing ToggleSwitch/Button sitting opposite a
-                 Header - but this card has no Header/HeaderIcon to push against, so without this,
-                 the whole RadioButton StackPanel (Content here) would float flush-right instead of
-                 flush-left like a normal option list. Confirmed via the installed package's own
-                 SettingsCard.xml docs (ContentAlignment enum: Left/Right/Vertical - Left is
-                 documented as also hiding HeaderIcon/Header/Description, which this card doesn't
-                 set anyway, so no loss). -->
+                 Padding="12,8,12,8" overrides the container style's default SettingsExpanderItemPadding
+                 (58,8,44,8, which reserves a left icon column this row has no use for) for a normal,
+                 evenly-padded look. ContentAlignment="Left" is required too: SettingsCard's default
+                 ContentAlignment ("Right") would otherwise float the whole RadioButton StackPanel
+                 flush-right, since this card has no Header/HeaderIcon to push against. -->
             <settings:SettingsExpander.Items>
                 <settings:SettingsCard Padding="18,8,12,8" ContentAlignment="Left" AutomationProperties.AutomationId="IntervalDisplayOptionsCard">
                     <StackPanel Spacing="6">
@@ -224,12 +151,9 @@
             </settings:SettingsExpander.Items>
         </settings:SettingsExpander>
 
-        <!-- Stop button display: merges the old ShowStopButtonDisplayToggle + StopButtonDisplayComboBox
-             into one SettingsExpander whose header-row trailing content IS the toggle (not buried in
-             the expanded items) - see AppConfig.ShowStopButtonDisplay's own comment for the off-state
-             behavior, MainWindow.UpdatePowerButtonRunningDisplay/UpdatePowerButtonNoneDisplay for where
-             this is read. The two RadioButtons below are only meaningful (and only enabled) while the
-             toggle is on - see ShowStopButtonDisplayToggle_Toggled. -->
+        <!-- Stop button display: one SettingsExpander whose header-row trailing content IS the toggle
+             (not buried in the expanded items) - see AppConfig.ShowStopButtonDisplay's own comment.
+             The two RadioButtons below are only meaningful (and only enabled) while the toggle is on. -->
         <settings:SettingsExpander
             x:Name="StopButtonDisplayExpander"
             Header="Stop button display"
@@ -276,11 +200,9 @@
         </settings:SettingsExpander>
 
         <!-- Mirrors the running interval countdown as a progress bar on the app's taskbar icon
-             (ITaskbarList3 - see Services/TaskbarProgressService), turning amber/yellow
-             automatically while paused. Never disabled while running. Grouped here rather than
-             under the General section below - despite being implemented via a taskbar/OS API, it's
-             a "what do I see while running" option from the user's point of view, same as Stop
-             button display above. -->
+             (ITaskbarList3 - see Services/TaskbarProgressService), turning amber/yellow automatically
+             while paused. Never disabled while running. Grouped under Display since it's a "what do
+             I see while running" option from the user's point of view. -->
         <settings:SettingsCard
             x:Name="ShowTaskbarProgressCard"
             Header="Taskbar icon progress bar"
@@ -304,14 +226,10 @@
         <!-- Behavior -->
         <TextBlock Text="Behavior" Style="{StaticResource SectionHeaderTextBlockStyle}" Margin="0,12,0,4" />
 
-        <!-- Start/Stop global hotkey (F6 by default) - recorded via HotkeyButton_Click
-             (enters recording mode) / HotkeyButton_KeyDown (captures the next key +
-             currently-held modifiers, or Escape to cancel). Actual RegisterHotKey calls go
-             through TryRegisterHotkey, a delegate MainWindow supplies (its
-             GlobalHotkeyService/WndProc subclass can't move into this UserControl) - this is
-             purely the display + input surface plus the rollback-on-conflict logic.
-             HotkeyButton's own Content is just its label now - the keyboard glyph already shown
-             as HotkeyCard's HeaderIcon made the button's previous internal SymbolIcon redundant. -->
+        <!-- Start/Stop global hotkey (F6 by default) - recorded via HotkeyButton_Click (enters
+             recording mode) / HotkeyButton_KeyDown (captures the next key + held modifiers, or Escape
+             to cancel). Actual RegisterHotKey calls go through TryRegisterHotkey, a delegate MainWindow
+             supplies since GlobalHotkeyService's WndProc subclass can't move into this UserControl. -->
         <settings:SettingsCard
             x:Name="HotkeyCard"
             Header="Hotkey"
@@ -336,17 +254,12 @@
             Visibility="Collapsed"
             AutomationProperties.AutomationId="HotkeyErrorTextBlock" />
 
-        <!-- Pause on movement: merges the old plain-SettingsCard PauseOnMovementCard into a
-             SettingsExpander whose header-row trailing content IS the master on/off toggle (same
-             pattern StopButtonDisplayExpander uses for ShowStopButtonDisplayToggle above) - see
-             AppConfig.PauseOnMovement's own comment for the master switch, and
-             PauseOnMovementForAutoClick/PauseOnMovementForJiggle for the two per-mode sub-toggles
-             below. Unlike StopButtonDisplayExpander's two RadioButtons (mutually exclusive, hence one
-             shared header-less SettingsCard wrapping both), these two are independent, non-exclusive
-             booleans - a user can plausibly want both on, one on, or neither - so each gets its own
-             SettingsCard row (Header = mode name, ToggleSwitch as trailing Content), mirroring this
-             same top-level Header+ToggleSwitch shape (CloseToTrayCard/etc.) one level deeper, rather
-             than the RadioButton family's shared-card/left-aligned-Content layout. -->
+        <!-- Pause on movement: a SettingsExpander whose header-row trailing content IS the master
+             on/off toggle (same pattern as StopButtonDisplayExpander) - see AppConfig.PauseOnMovement
+             and PauseOnMovementForAutoClick/PauseOnMovementForJiggle for the two per-mode sub-toggles
+             below. Unlike StopButtonDisplayExpander's mutually-exclusive RadioButtons, these are
+             independent booleans (both, one, or neither can be on), so each gets its own SettingsCard
+             row rather than one shared card. -->
         <settings:SettingsExpander
             x:Name="PauseOnMovementExpander"
             Header="Pause on movement"
@@ -365,22 +278,11 @@
                 Toggled="PauseOnMovementToggle_Toggled"
                 AutomationProperties.AutomationId="PauseOnMovementToggle"
                 AutomationProperties.Name="Pause on movement" />
-            <!-- Two separate direct Items children (not one shared SettingsCard, unlike the
-                 RadioButton groups above) - each still has to be an actual SettingsCard per se
-                 IntervalDisplayExpander's own Items comment (a bare control/panel as an Items child crashes on
-                 expand). PART_ItemsRepeater's StackLayout (confirmed against the installed
-                 CommunityToolkit.WinUI.Controls.SettingsControls 8.2.251219 source,
-                 SettingsExpander.xaml's PART_ItemsRepeater template part) applies no Spacing between
-                 siblings (StackLayout's own default is 0) - the only separation Items siblings get
-                 for free is the 1px top BorderThickness (0,1,0,0) baked into
-                 DefaultSettingsExpanderItemStyle, applied to every item uniformly (no first-item
-                 exception - see SettingsExpanderItemStyleSelector). So the 6px gap matching the
-                 RadioButton StackPanels' Spacing="6" elsewhere in this file needs to be added
-                 explicitly, not assumed - Margin="0,6,0,0" on the second card is what actually
-                 realizes a 6px gap on top of that otherwise-0 default (the 1px separator border still
-                 renders at the second card's own top edge, inside that 6px margin - a subtle extra
-                 hairline the plain RadioButton stacks don't have, since RadioButton itself has no
-                 border to contribute one). -->
+            <!-- Two separate direct Items children (each still must be an actual SettingsCard, not a
+                 bare control - see IntervalDisplayExpander's own Items comment for why). Items siblings
+                 get no Spacing for free (PART_ItemsRepeater's StackLayout default is 0, plus a 1px top
+                 border baked into every item) - Margin="0,6,0,0" on the second card adds the matching
+                 6px gap explicitly. -->
             <settings:SettingsExpander.Items>
                 <settings:SettingsCard x:Name="PauseOnMovementAutoClickCard" Header="Auto click" Height="48" MinHeight="48" AutomationProperties.AutomationId="PauseOnMovementAutoClickCard">
                     <ToggleSwitch
@@ -421,24 +323,26 @@
             <settings:SettingsExpander.HeaderIcon>
                 <SymbolIcon Symbol="Play" />
             </settings:SettingsExpander.HeaderIcon>
-            <!-- Padding="18,8,16,8" on both Items cards below is an asymmetric mix of the two other
-                 patterns already in this file (see IntervalDisplayExpander's own Items comment for the
-                 default SettingsExpanderItemPadding value, 58,8,44,8, that both patterns start
-                 from): the left value (18, not the default 58) matches ThemeCard/BackdropCard/
-                 IntervalDisplayOptionsCard/StopButtonDisplayOptionsCard's own override, so each
-                 card's Header text lines up under AppLaunchBehaviorExpander's icon rather than
-                 under its header text (the latter is what the untouched default padding gives
-                 PauseOnMovementAutoClickCard/JiggleCard above). The right value is NOT the
-                 untouched default (44) - confirmed via winapp ui's BoundingRectangle that 44
-                 lines the toggle up with this expander's OWN header-row toggles (PauseOnMovementToggle/
-                 ShowStopButtonDisplayToggle, offset ~28px left of a plain card to make room for the
-                 expander's chevron - expected/correct for THOSE, since they share the header row
-                 the chevron sits in), not with a plain non-expandable card's toggle
-                 (CloseToTrayToggle/ShowTaskbarProgressToggle/StartWithWindowsToggle), which sits
-                 28px further right since it has no chevron to share space with. These two Items
-                 cards want to match THAT plain-card position instead - SettingsCardPadding's own
-                 default right value (16) turned out to do exactly that once measured. -->
+            <!-- Padding="18,8,16,8" on both Items cards below is a deliberate mix: left (18, not the
+                 default 58) aligns each card's Header text under the expander's icon; right (16, the
+                 SettingsCardPadding default, not the item style's default 44) lines the trailing
+                 toggle up with a plain non-expandable card's toggle position rather than this
+                 expander's own header-row toggle (which sits closer in to make room for the chevron). -->
             <settings:SettingsExpander.Items>
+                <settings:SettingsCard Header="Launch window" Padding="18,8,16,8" AutomationProperties.AutomationId="LaunchWindowCard">
+                    <DropDownButton
+                        x:Name="LaunchWindowDropDownButton"
+                        AutomationProperties.AutomationId="LaunchWindowDropDownButton"
+                        AutomationProperties.Name="Launch window">
+                        <DropDownButton.Flyout>
+                            <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                <MenuFlyoutItem Text="Normal" Tag="Normal" Click="LaunchWindowMenuFlyoutItem_Click" AutomationProperties.AutomationId="LaunchWindowNormalItem" />
+                                <MenuFlyoutItem Text="Minimized" Tag="Minimized" Click="LaunchWindowMenuFlyoutItem_Click" AutomationProperties.AutomationId="LaunchWindowMinimizedItem" />
+                                <MenuFlyoutItem x:Name="LaunchWindowTrayItem" Text="System tray" Tag="Tray" IsEnabled="False" Click="LaunchWindowMenuFlyoutItem_Click" AutomationProperties.AutomationId="LaunchWindowTrayItem" />
+                            </MenuFlyout>
+                        </DropDownButton.Flyout>
+                    </DropDownButton>
+                </settings:SettingsCard>
                 <!-- Deliberately NOT gated by RunAutomationOnLaunchToggle below - Preferred mode is
                      an independent setting (which mode the UI selects at launch), not exclusively
                      a "what to force-run" option. -->
@@ -468,18 +372,6 @@
                         AutomationProperties.AutomationId="RunAutomationOnLaunchToggle"
                         AutomationProperties.Name="Start automatically" />
                 </settings:SettingsCard>
-                <settings:SettingsCard Header="Enable &quot;Randomized interval&quot;" Padding="18,8,16,8" AutomationProperties.AutomationId="RandomizeIntervalOnLaunchCard">
-                    <ToggleSwitch
-                        x:Name="RandomizeIntervalOnLaunchToggle"
-                        OnContent=""
-                        OffContent=""
-                        MinWidth="0"
-                        Width="44"
-                        Padding="0"
-                        Toggled="RandomizeIntervalOnLaunchToggle_Toggled"
-                        AutomationProperties.AutomationId="RandomizeIntervalOnLaunchToggle"
-                        AutomationProperties.Name="Enable &quot;Randomized interval&quot;" />
-                </settings:SettingsCard>
             </settings:SettingsExpander.Items>
         </settings:SettingsExpander>
 
@@ -494,7 +386,7 @@
             Header="Keep running in system tray"
             AutomationProperties.AutomationId="CloseToTrayCard">
             <settings:SettingsCard.HeaderIcon>
-                <SymbolIcon Symbol="Pin" />
+                <FontIcon Glyph="&#xF120;" />
             </settings:SettingsCard.HeaderIcon>
             <ToggleSwitch
                 x:Name="CloseToTrayToggle"
@@ -517,7 +409,7 @@
             Description="Opens app when Windows starts"
             AutomationProperties.AutomationId="StartWithWindowsCard">
             <settings:SettingsCard.HeaderIcon>
-                <FontIcon Glyph="&#xF120;" />
+                <FontIcon Glyph="&#xE7B5;" />
             </settings:SettingsCard.HeaderIcon>
             <ToggleSwitch
                 x:Name="StartWithWindowsToggle"
@@ -541,21 +433,13 @@
         <!-- About -->
         <TextBlock Text="About" Style="{StaticResource SectionHeaderTextBlockStyle}" Margin="0,12,0,4" />
 
-        <!-- HeaderIcon is the app's own icon (Assets/app-20.png - its own scale-qualified set,
-             generated from Assets/app.ico the same way as MainWindow's title bar app-18.png: the
-             100% bucket (20) is downscaled from the ico's own native 24x24 frame (the closest
-             available size, so this preserves more of that frame's own hinting than starting from
-             the much larger 256x256 master would); the other 4 buckets (25/30/40/80) have no
-             comparably-close native frame, so those are downscaled from the ico's 256x256 frame
-             instead. 20 (not larger, e.g. 32/48, both tried here first) is a hard ceiling on
-             SettingsExpander's own HeaderIcon column - anything past it doesn't render any larger.
-             Description is the static "By Util Labs" tag line - unlike the version (below), it's
-             not runtime-computed, so it's set here rather than in code-behind.
+        <!-- HeaderIcon is the app's own icon (Assets/app-20.png). 20px is a hard ceiling on
+             SettingsExpander's HeaderIcon column - anything larger doesn't render any bigger.
+             Description is the static "By Util Labs" tag line, set here since it's not runtime-computed.
 
-             The version itself is shown as Content instead, the same right-aligned header-row
-             slot StopButtonDisplayExpander/PauseOnMovementExpander above use for their toggles -
-             AboutVersionText's Text is set in code-behind (see SettingsPanel's constructor and
-             GetCurrentVersionString) since the version isn't known at XAML-authoring time. -->
+             The version is shown as Content instead, the same right-aligned header-row slot other
+             expanders use for their toggles - AboutVersionText's Text is set in code-behind since the
+             version isn't known at XAML-authoring time. -->
         <settings:SettingsExpander
             x:Name="AboutExpander"
             Header="MouseUtil"
@@ -571,14 +455,9 @@
                 Style="{StaticResource CaptionTextBlockStyle}"
                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                 AutomationProperties.AutomationId="AboutVersionText" />
-            <!-- See IntervalDisplayExpander's own Items comment above for why this is one shared, Header-less
-                 SettingsCard (not a bare StackPanel) with an explicit trimmed Padding, rather than
-                 the toolkit's own default 58px-left-indented item style. HyperlinkButton's
-                 NavigateUri launches the link in the system's default browser with no code-behind
-                 needed - each link's label ("Source code"/"Windows Community Toolkit") stands in
-                 for the full https:// URI (which NavigateUri still carries) or its bare host/path,
-                 keeping these two rows scannable alongside the version tag now sharing the header
-                 row. -->
+            <!-- See IntervalDisplayExpander's own Items comment above for why this is one shared,
+                 Header-less SettingsCard. HyperlinkButton's NavigateUri launches the link in the
+                 system's default browser with no code-behind needed. -->
             <settings:SettingsExpander.Items>
                 <settings:SettingsCard Padding="18,8,12,8" ContentAlignment="Left" AutomationProperties.AutomationId="AboutOptionsCard">
                     <StackPanel Spacing="6">

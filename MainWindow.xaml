@@ -12,19 +12,18 @@
                  from Controls/SettingsPanel.xaml, a separate UserControl that can't see this Grid's
                  local resources. -->
 
-            <!-- IntervalCaptionTextBlock's style: a fixed "Interval" caption label whose Foreground
-                 dims via a real Normal/Disabled VisualState transition (see DimmableLabel) instead of
-                 a code-behind Brush snapshot, so it stays correctly themed even while disabled.
-                 BodyStrongTextBlockStyle/Title Case matches SettingsPanel's own SectionHeaderTextBlockStyle
-                 (see Controls/SettingsPanel.xaml) - the all-caps/dimmed/tracked "eyebrow" look was
-                 dropped there first; this brings MainWindow's own card titles in line with it. -->
+            <!-- IntervalCaptionTextBlock's style: a normally-"Interval" caption label whose Foreground
+                 dims via a real Normal/Disabled VisualState transition (see DimmableLabel) instead of a
+                 code-behind Brush snapshot, so it stays correctly themed even while disabled.
+                 Text="{TemplateBinding Text}" (rather than a hardcoded literal) is what lets MainWindow
+                 swap the caption to "Edit preset"/"Add preset" while interval preset edit mode is active. -->
             <Style x:Key="IntervalCaptionLabelStyle" TargetType="controls:DimmableLabel">
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="controls:DimmableLabel">
                             <TextBlock
                                 x:Name="CaptionPresenter"
-                                Text="Interval"
+                                Text="{TemplateBinding Text}"
                                 Margin="0,-4,0,0"
                                 Style="{StaticResource BodyStrongTextBlockStyle}"
                                 Foreground="{ThemeResource TextFillColorPrimaryBrush}">
@@ -44,10 +43,8 @@
                 </Setter>
             </Style>
 
-            <!-- AutoStopCaption's style: matches IntervalCaptionLabelStyle above - the same card-title
-                 look every other card uses, whose Foreground dims via a real Normal/Disabled VisualState
-                 transition (see DimmableLabel) instead of a code-behind Brush snapshot, so it stays
-                 correctly themed even while disabled. -->
+            <!-- AutoStopCaption's style: matches IntervalCaptionLabelStyle above - same card-title look,
+                 dims via a real Normal/Disabled VisualState transition instead of a code-behind snapshot. -->
             <Style x:Key="AutoStopCaptionLabelStyle" TargetType="controls:DimmableLabel">
                 <Setter Property="Template">
                     <Setter.Value>
@@ -74,10 +71,62 @@
                 </Setter>
             </Style>
 
+            <!-- RandomizeIntervalLabelStyle/FullIntervalDisplayLabelStyle: the two Options-row labels
+                 next to RandomizeIntervalToggle/IntervalDisplayToggle in IntervalOptionsFlyout below.
+                 DimmableLabel so their Foreground dims via a real Normal/Disabled VisualState transition,
+                 matching every other label now that the toggles get locked while running (SetInputsEnabled). -->
+            <Style x:Key="RandomizeIntervalLabelStyle" TargetType="controls:DimmableLabel">
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="controls:DimmableLabel">
+                            <TextBlock
+                                x:Name="CaptionPresenter"
+                                Text="Randomize interval"
+                                FontSize="12"
+                                Foreground="{ThemeResource TextFillColorPrimaryBrush}">
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal" />
+                                        <VisualState x:Name="Disabled">
+                                            <VisualState.Setters>
+                                                <Setter Target="CaptionPresenter.Foreground" Value="{ThemeResource TextFillColorDisabledBrush}" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                            </TextBlock>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style x:Key="FullIntervalDisplayLabelStyle" TargetType="controls:DimmableLabel">
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="controls:DimmableLabel">
+                            <TextBlock
+                                x:Name="CaptionPresenter"
+                                Text="Full interval display"
+                                FontSize="12"
+                                Foreground="{ThemeResource TextFillColorPrimaryBrush}">
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal" />
+                                        <VisualState x:Name="Disabled">
+                                            <VisualState.Setters>
+                                                <Setter Target="CaptionPresenter.Foreground" Value="{ThemeResource TextFillColorDisabledBrush}" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                            </TextBlock>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <!-- StatusTextBlock's style: a "Tone" VisualState group (Muted/Accent/Success/Critical/
-                 Caution - see StatusTone) replaces the old code-behind Brush-snapshot pattern
-                 (SetStatusText used to take a Brush directly). Each tone's Setter references a live
-                 {ThemeResource}, so the active tone's color re-resolves automatically on theme change. -->
+                 Caution - see StatusTone). Each tone's Setter references a live {ThemeResource}, so the
+                 active tone's color re-resolves automatically on theme change. -->
             <Style x:Key="StatusLabelStyle" TargetType="controls:StatusLabel">
                 <Setter Property="HorizontalAlignment" Value="Center" />
                 <Setter Property="Margin" Value="0,0,0,10" />
@@ -139,18 +188,8 @@
              from the left edge, and an empty Star filler column absorbs all slack between it and the
              caption-button spacer. This way, resizing CaptionButtonsSpacerColumn (see
              UpdateTitleBarCaptionSpacer) only eats into the filler column and never shifts the title
-             horizontally.
-
-             This row used to also carry a "Auto click"/"Jiggle"/"Settings" subtitle
-             (ModeSubtitleTextBlock) underneath "MouseUtil", kept in sync from code-behind
-             (UpdateModeIndicators/ShowSettingsOverlay). That subtitle was removed once the mode
-             selector itself moved to the top of MainContentGrid (see ModeSegmentedControl below) and
-             started showing its own icon+text labels directly - at that point the title bar subtitle
-             was pure duplication of what the selector already displays, so it's gone and "MouseUtil"
-             is the only thing left in this row. Height shrank from 64 back to 48 to match (measured
-             empirically via UI automation on a freshly-launched build: 64 - now with only one line of
-             text instead of two - left a large dead band under the caption; 48 is the smallest height
-             that still leaves this single line breathing room above/below without clipping). -->
+             horizontally. "MouseUtil" is the only content in this row; Height="48" is the smallest
+             height that leaves it breathing room without clipping. -->
         <Grid x:Name="AppTitleBarGrid" Grid.Row="0" Height="48" Padding="25,0,16,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
@@ -170,16 +209,10 @@
                 Orientation="Horizontal"
                 Spacing="16"
                 VerticalAlignment="Center">
-                <!-- Source resolves through Assets\app-18.scale-*.png (100/125/150/200/400) via
-                     MRT Core's scale-qualifier matching (see "Tailor your resources for language,
-                     scale, and other qualifiers" - learn.microsoft.com/windows/apps/windows-app-sdk/
-                     mrtcore/tailor-resources-lang-scale-contrast#scale), each generated by directly
-                     downscaling a higher-resolution frame already embedded in Assets/app.ico rather
-                     than upscaling a single low-res bitmap - so the title bar icon stays crisp at
-                     125%/150%/200%/400% scaling instead of blurring, and the match is re-evaluated
-                     live if the window moves to a monitor at a different scale factor, with no
-                     code-behind needed. Stretch="Uniform" is just a safety net for scale factors with
-                     no exact variant (e.g. 175%/225%), where MRT falls back to the next-largest one. -->
+                <!-- Source resolves through Assets\app-18.scale-*.png (100/125/150/200/400) via MRT
+                     Core's scale-qualifier matching, so the title bar icon stays crisp at higher DPI
+                     instead of blurring, re-evaluated live if the window moves to a different-scale
+                     monitor. Stretch="Uniform" is a safety net for scale factors with no exact variant. -->
                 <Image
                     Width="18"
                     Height="18"
@@ -196,14 +229,9 @@
 
         <!-- Everything below the title bar: padded/inset from the window edges. -->
         <Grid x:Name="MainContentGrid" Grid.Row="1" Padding="24,0,24,24">
-            <!-- Row order is [ModeSelector, Interval card, Auto Stop card, filler, status text, ON/OFF
-                 pill] - the mode selector moved from the bottom (row 3, paired with the pill) to the
-                 very top (row 0), pushing the two cards down by one row each. The "*" filler row moved
-                 with them, from index 2 to index 3, so it still sits directly above the status
-                 text/pill and absorbs whatever slack is left between the cards and the bottom of the
-                 window - see that row's own (lack of) content below. Status text and the pill keep
-                 their original row indices (4 and 5) since nothing after the filler row needed to
-                 move. -->
+            <!-- Row order: [ModeSelector, Interval card, Auto Stop card, filler, status text,
+                 PowerToggleButton]. The "*" filler row sits directly above the status text/button and
+                 absorbs whatever slack is left between the cards and the bottom of the window. -->
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -214,12 +242,9 @@
             </Grid.RowDefinitions>
 
             <!-- Interval card -->
-            <!-- MinHeight="130" pins this card (and, transitively, everything below it, since
-                 MainContentGrid's row for this card is Height="Auto") to its natural height in Basic
-                 mode - the taller of Basic/Advanced - measured empirically via UI automation on a
-                 freshly-launched Release build (129px) plus 1px of extra breathing room. This is the
-                 floor that stops the card from ever shrinking below that height; see the Grid inside
-                 for how the Basic/Advanced height difference itself is absorbed. -->
+            <!-- MinHeight="130" pins this card (and everything below it, since its row is Height="Auto")
+                 to its natural height in Basic mode - the taller of Basic/Advanced - so it never
+                 shrinks below that height; see the Grid inside for how the height difference is absorbed. -->
             <Border Grid.Row="1" Style="{StaticResource CardBorderStyle}" Padding="20" MinHeight="130" Margin="0,0,0,16">
                 <Grid>
                     <Grid.RowDefinitions>
@@ -227,244 +252,612 @@
                         <RowDefinition Height="*" MinHeight="12" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <!-- Header row: "INTERVAL" caption plus the randomize-interval toggle, pinned to
-                         the row's right edge via the "*"/Auto column split (same pattern as
-                         SettingsOverlay's own Back-button/version-text header row). -->
+                    <!-- Header row: "INTERVAL" caption plus the interval presets button, pinned to
+                         the row's right edge via the "*"/Auto column split. -->
                     <Grid Grid.Row="0" ColumnSpacing="8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <controls:DimmableLabel
-                            x:Name="IntervalCaptionTextBlock"
+                        <StackPanel
                             Grid.Column="0"
-                            VerticalAlignment="Center"
-                            Style="{StaticResource IntervalCaptionLabelStyle}" />
+                            Orientation="Horizontal"
+                            Spacing="6"
+                            VerticalAlignment="Center">
+                            <controls:DimmableLabel
+                                x:Name="IntervalCaptionTextBlock"
+                                VerticalAlignment="Center"
+                                Style="{StaticResource IntervalCaptionLabelStyle}" />
+                            <!-- RandomizeIntervalIndicatorIcon: a quiet "Randomize interval is on" badge,
+                                 shown only while _isRandomizeIntervalEnabled is true (see
+                                 UpdateRandomizeIntervalIndicator in MainWindow.xaml.cs). The toggle that
+                                 actually controls randomize-interval lives inside IntervalOptionsFlyout
+                                 below and isn't visible at rest, so this glyph is the only at-a-glance
+                                 sign the setting is active. Sized a bit smaller than the title's own
+                                 BodyStrongTextBlockStyle text so it reads as a small badge. -->
+                            <FontIcon
+                                x:Name="RandomizeIntervalIndicatorIcon"
+                                FontSize="12"
+                                Margin="0,-2,0,0"
+                                VerticalAlignment="Center"
+                                Glyph="&#xE8B1;"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Visibility="Collapsed"
+                                AutomationProperties.Name="Randomize interval is on"
+                                ToolTipService.ToolTip="Randomize interval is on" />
+                        </StackPanel>
 
-                        <!-- Randomize-interval toggle: a real ToggleButton, so IsChecked is the actual
-                             on/off source of truth (synced into _isRandomizeIntervalEnabled from the
-                             Checked/Unchecked handlers in code-behind) rather than a Click handler
-                             flipping a bool and recoloring the icon as the only visible state. Background/
-                             BorderBrush are theme-aware ControlFillColorDefaultBrush/
-                             ControlStrokeColorDefaultBrush (not literal Transparent) with
-                             BorderThickness="0.5" (not 0), so the idle/Normal (Unchecked+Enabled) state
-                             itself renders a faint pill/outline instead of fully invisible chrome -
-                             enough that the control reads as clickable at rest, not just on hover. This
-                             is a deliberate divergence from SettingsBackButton's own
-                             transparent-idle-chrome pattern elsewhere in this file: that's a plain
-                             Button whose only state is "did you click it", so idle chrome adds
-                             nothing, but this is a toggle whose on/off state should be discoverable
-                             without hovering, and a literal-Transparent idle look was the specific
-                             complaint that led to this brush choice. These two keys are the exact ones
-                             the default ToggleButtonStyle itself resolves Background/BorderBrush to
-                             when neither is set locally (ToggleButtonBackground/ToggleButtonBorderBrush
-                             default to ControlFillColorDefaultBrush/ControlElevationBorderBrush in
-                             generic.xaml) - confirmed by reading the ControlTemplate's CommonStates
-                             group before making this change: its "Normal" VisualState has no Storyboard
-                             of its own, so it just leaves the ContentPresenter's Background/BorderBrush
-                             at whatever the control's own Background/BorderBrush TemplateBinding
-                             resolved to, which is why setting these two attributes directly on the
-                             element (rather than overriding the ToggleButtonBackground/
-                             ToggleButtonBorderBrush resource keys in ToggleButton.Resources below) is
-                             sufficient - no template-level override needed for Normal specifically.
-                             Every other state (PointerOver, Pressed, Checked, CheckedPointerOver,
-                             CheckedPressed, Disabled, CheckedDisabled, ...) has its own explicit
-                             Storyboard in the default ControlTemplate that overwrites the
-                             ContentPresenter's Background/BorderBrush outright, so this local Normal-
-                             state brush choice cannot bleed into any of those - confirmed against each
-                             VisualState's Storyboard in generic.xaml, not assumed.
-                             ControlElevationBorderBrush is the exact default ToggleButtonBorderBrush
-                             value (a two-stop gradient), kept as-is here rather than substituted with
-                             a flat brush, so this idle border matches every other unstyled ToggleButton
-                             in the app/OS exactly - under evaluation against a flat ControlStrokeColorDefaultBrush
-                             alternative, which may still be reverted to if the gradient reads unevenly
-                             at BorderThickness="0.5" on a ~24px (16 * 1.5 RenderTransform) control.
-
-                             ToggleButton.Resources overrides ToggleButtonBackgroundDisabled/
-                             ToggleButtonBorderBrushDisabled to Transparent, which covers the
-                             Unchecked+Disabled/locked-while-off case: with randomize-interval Off and a
-                             run in progress, there's nothing to indicate, so the chrome must stay fully
-                             invisible, same as before.
-
-                             Checked+Disabled/locked-while-on is left at the default ToggleButtonStyle
-                             look for its fill (ToggleButtonBackgroundCheckedDisabled is not overridden
-                             here, so it resolves to the template's own AccentFillColorDisabledBrush),
-                             with only ToggleButtonBorderBrushCheckedDisabled kept as a deliberate
-                             customization on top: bound to TextFillColorDisabled (not
-                             AccentFillColorDisabled - see that brush's own declaration comment below for
-                             why the switch), so the setting still reads as "on" via a visible border even
-                             while locked, on top of whatever the default fill looks like.
-                             RandomizeIntervalIcon's own
-                             Foreground/Opacity are also left undimmed/uncustomized for this state now -
-                             see UpdateRandomizeIntervalIndicator's own doc comment for how it handles
-                             Checked+Disabled versus the other three states, which do still carry
-                             deliberate customization.
-
-                             The icon's Foreground is never left to inherit from the ContentPresenter for
-                             the Checked+enabled or Unchecked+locked cases (the default ControlTemplate's
-                             Checked VisualState re-targets the ContentPresenter's Foreground to
-                             ToggleButtonForegroundChecked, i.e. TextOnAccentFillColorPrimaryBrush, which
-                             FontIcon.Foreground would otherwise silently inherit) - UpdateRandomizeIntervalIndicator
-                             sets explicit local Foreground/Opacity values from code for those two states:
-                             OnAccentBrushSource (TextOnAccentFillColorPrimaryBrush) at Opacity 1 only
-                             while Checked AND enabled, since that color is tuned to sit on the
-                             fully-opaque, vivid accent-filled pill that only exists in that exact state;
-                             and DisabledBrushSource (TextFillColorDisabledBrush) at Opacity 0.6 while
-                             Unchecked AND locked, matching IntervalCaptionLabelStyle's own Disabled look
-                             - this is the one locked case that still needs a distinctly dimmer,
-                             theme-neutral color, since Unchecked+Disabled's chrome stays fully Transparent
-                             (see ToggleButtonBackgroundDisabled/ToggleButtonBorderBrushDisabled above), so
-                             there's no filled pill at all for an accent-adjacent color to sit on. Checked
-                             AND locked instead ClearValue's the icon's Foreground entirely (so it inherits
-                             the ContentPresenter's own default CheckedDisabled-VisualState Foreground,
-                             ToggleButtonForegroundCheckedDisabled/TextOnAccentFillColorDisabled) and
-                             leaves Opacity at 1 - no customization left on the icon for this state, only
-                             the border above. PrimaryBrushSource is used at Opacity 0.8 while idle
-                             (Unchecked and enabled - brighter than Unchecked+locked, so the icon still
-                             reads as interactive rather than a plain label). So the glyph is either
-                             genuinely dark-on-accent-pill/light-on-accent-pill while sitting on the one
-                             fully vivid accent-filled pill (Checked AND enabled), the default
-                             ControlTemplate's own disabled-on-accent color while sitting on the
-                             default-styled Checked+Disabled pill, the app's own ordinary theme-correct
-                             text color while idle (no pill at all), or a distinctly dimmer, theme-neutral
-                             gray specifically for Unchecked+Disabled to match the "INTERVAL" caption's
-                             own disabled look.
-
-                             MinWidth="0"/MinHeight="0" override the default ToggleButton style's own
-                             minimum size, and Height="16" pins the button to (approximately)
-                             IntervalCaptionTextBlock's own natural line height, tuned by eye/measurement
-                             against a before/after screenshot comparison - without this, the button
-                             would be taller than the plain caption text used to be, and since a Grid
-                             row's height is the max of its children's, this header row would end up
-                             taller than it used to be, pushing every row below it down by a few pixels
-                             even though nothing else on the card changed.
-
-                             The ToggleButton's own RenderTransform (ScaleTransform 1.5x) makes its
-                             hover/pressed/checked chrome - and its actual hit-test area, since WinUI
-                             hit-tests against post-transform bounds - visibly bigger and easier to click,
-                             without touching layout at all: RenderTransform is a render-only, post-Arrange
-                             transform, so it can't feed back into the Grid's row-height/column-width
-                             measurement the way Height/Padding above do.
-
-                             RenderTransformOrigin="1,0.5" (the button's own right-center, in the
-                             0-1-normalized-to-bounding-box coordinate space RenderTransformOrigin uses -
-                             NOT the same coordinate space as the FontIcon's RenderTransformOrigin below,
-                             which normalizes against the icon's own, much smaller, bounding box)
-                             deliberately anchors the scale at the button's right edge instead of its
-                             center. This matters because now that idle chrome is visible (see the pill/
-                             outline discussion above), the chrome's right edge is what needs to line up
-                             with BasicIntervalRow's SecondsBox right edge below (both this header Grid
-                             and BasicIntervalRow are direct children of the same outer card Grid and
-                             stretch to the same full card width, so their right edges are meant to read
-                             as one continuous right-aligned column) - and a point at a shape's own edge is
-                             exactly the one point RenderTransform leaves fixed when scaling around it, by
-                             definition of how scaling around a point works. With the old center origin
-                             (0.5,0.5), the pre-transform right edge (already aligned with SecondsBox, via
-                             this button's HorizontalAlignment="Right" filling the same full-width column)
-                             would end up growing outward symmetrically in both directions, overshooting
-                             past SecondsBox's edge by a quarter of the button's own width - fine back when
-                             the chrome was invisible and only the (separately-transformed, still-centered)
-                             icon glyph was visible, but wrong now that the chrome itself is the visible,
-                             supposedly-edge-aligned affordance. Anchoring at the right edge instead makes
-                             the chrome grow only leftward/vertically-symmetric, so its right edge stays
-                             pinned exactly at the pre-transform layout position - i.e. flush with
-                             SecondsBox's right edge - at the cost of the icon glyph now sitting inset
-                             within the pill rather than flush with its edge (a deliberate priority flip:
-                             the visible chrome's alignment with the rest of this card's right-aligned
-                             column now matters more than the glyph's own old alignment, now that the glyph
-                             is no longer the only visible thing).
-
-                             RandomizeIntervalIcon's own RenderTransform (ScaleTransform, the exact
-                             reciprocal 1/1.5, origin 0.5,0.5 - i.e. the ICON's own center, unchanged by
-                             the button-origin change above and not needing to be) still cancels the
-                             parent's scale back out to render the glyph at its original ~14px size, and -
-                             confirmed empirically via screenshot comparison across Light/Dark and
-                             Normal/PointerOver/Pressed/Checked/Disabled states, not just assumed from the
-                             transform math - the glyph still renders centered within the pill despite the
-                             two RenderTransformOrigins now differing (button: right-center; icon:
-                             center). This isn't a coincidence: DefaultToggleButtonStyle's ControlTemplate
-                             centers the FontIcon within the ContentPresenter (HorizontalContentAlignment/
-                             VerticalContentAlignment="Center"), so pre-transform, the icon's own bounding-
-                             box center already coincides exactly with the button's bounding-box center.
-                             Applying the button's RenderTransform (scale 1.5 anchored at the button's
-                             right edge) moves any point by the same formula regardless of what that point
-                             represents - it maps the button's own center and the icon's (coincident)
-                             center to the identical new location, since both start from the identical
-                             original location. So the transformed pill's new center and the transformed
-                             icon's new center still coincide, and the icon reads as centered within the
-                             pill - just a pill whose center (and left edge) have shifted left, while its
-                             right edge, uniquely, has not moved at all. Keep the icon's ScaleTransform
-                             value as the literal mathematical reciprocal of the button's (not a rounded
-                             guess), or the icon will drift slightly off its original rendered size -
-                             independent of, and unaffected by, the button-origin choice above. -->
-                        <ToggleButton
-                            x:Name="RandomizeIntervalButton"
+                        <!-- Column 1: Accept/Discard (visible only while interval-preset inline edit mode
+                             is active on this card - see MainWindow.EnterIntervalPresetCardEditMode/
+                             FinishIntervalPresetEditMode) plus IntervalOptionsButton itself, left to right.
+                             Wrapping all three in one horizontal StackPanel keeps IntervalOptionsButton's
+                             fixed 16x16/RenderTransform-scale footprint untouched while letting Accept/
+                             Discard grow/shrink this StackPanel's Auto width in and out of edit mode. -->
+                        <StackPanel
                             Grid.Column="1"
+                            Orientation="Horizontal"
+                            Spacing="12"
+                            VerticalAlignment="Center">
+                            <!-- Accept: commits the preset edit (MainWindow.AcceptIntervalPresetEdit),
+                                 also reachable via Enter (IntervalPresetField_KeyDown). Literal 16x16 +
+                                 1.5x RenderTransform - same technique as IntervalOptionsButton below - not
+                                 an approximated 20x20, since a real 20x20 box would grow this header row's
+                                 height once Accept/Discard become visible (RenderTransform is render-only,
+                                 doesn't feed back into layout). RenderTransformOrigin="1,0.5" (right-edge,
+                                 not center) so each button's 1.5x scale bleeds only to its own left - a
+                                 center anchor would bleed past both sides and make adjacent buttons'
+                                 scaled edges overlap, reading as no gap. FontIcon's reciprocal 0.66666667
+                                 scale cancels the parent's scale back out so the glyph still renders at
+                                 its true ~14px size. AccentButtonStyle marks it as the affirmative action. -->
+                            <Button
+                                x:Name="IntervalPresetAcceptButton"
+                                Style="{StaticResource AccentButtonStyle}"
+                                Padding="0"
+                                Width="16"
+                                Height="16"
+                                MinWidth="0"
+                                MinHeight="0"
+                                VerticalAlignment="Center"
+                                RenderTransformOrigin="1,0.5"
+                                CornerRadius="2.5,2.5,2.5,2.5"
+                                Visibility="Collapsed"
+                                Click="IntervalPresetAcceptButton_Click"
+                                AutomationProperties.AutomationId="IntervalPresetAcceptButton"
+                                AutomationProperties.Name="Accept interval preset"
+                                ToolTipService.ToolTip="Accept">
+                                <Button.RenderTransform>
+                                    <ScaleTransform ScaleX="1.5" ScaleY="1.5" />
+                                </Button.RenderTransform>
+                                <FontIcon Glyph="&#xE8FB;" FontSize="14" RenderTransformOrigin="0.5,0.5">
+                                    <FontIcon.RenderTransform>
+                                        <ScaleTransform ScaleX="0.66666667" ScaleY="0.66666667" />
+                                    </FontIcon.RenderTransform>
+                                </FontIcon>
+                            </Button>
+                            <!-- Discard: abandons whichever mode is active (editing an existing slot, or
+                                 composing a new one) without touching the staged preset
+                                 (MainWindow.AbandonIntervalPresetEditIfActive). Same 16x16+1.5x-
+                                 RenderTransform technique as IntervalPresetAcceptButton above, plain look
+                                 (no AccentButtonStyle). -->
+                            <Button
+                                x:Name="IntervalPresetDiscardButton"
+                                Padding="0"
+                                Width="16"
+                                Height="16"
+                                MinWidth="0"
+                                MinHeight="0"
+                                VerticalAlignment="Center"
+                                RenderTransformOrigin="1,0.5"
+                                CornerRadius="2.5,2.5,2.5,2.5"
+                                Visibility="Collapsed"
+                                Click="IntervalPresetDiscardButton_Click"
+                                AutomationProperties.AutomationId="IntervalPresetDiscardButton"
+                                AutomationProperties.Name="Discard interval preset edit"
+                                ToolTipService.ToolTip="Discard">
+                                <Button.RenderTransform>
+                                    <ScaleTransform ScaleX="1.5" ScaleY="1.5" />
+                                </Button.RenderTransform>
+                                <FontIcon Glyph="&#xF78A;" FontSize="14" RenderTransformOrigin="0.5,0.5">
+                                    <FontIcon.RenderTransform>
+                                        <ScaleTransform ScaleX="0.66666667" ScaleY="0.66666667" />
+                                    </FontIcon.RenderTransform>
+                                </FontIcon>
+                            </Button>
+                            <!-- Interval options button: opens IntervalOptionsFlyout below, which holds
+                             the randomize-interval toggle plus up to 6 one-click interval presets. A
+                             plain Button, not a ToggleButton - its visual state only needs to reflect
+                             whether the flyout is open, which Flyout's own chrome already handles.
+                             Width/Height="16" with MinWidth/MinHeight="0" plus a 1.5x RenderTransform
+                             keep the layout footprint small while the rendered/hit-test size stays
+                             larger (RenderTransform is render-only, doesn't feed back into layout).
+                             FontIcon.RenderTransform below is the reciprocal scale, so the glyph still
+                             renders at its true ~14px size. Disabled while interval preset edit mode is
+                             active (MainWindow.EnterIntervalPresetCardEditMode/FinishIntervalPresetEditMode)
+                             or while automation is running - re-entering this flyout mid-edit has no
+                             sensible meaning. -->
+                        <Button
+                            x:Name="IntervalOptionsButton"
                             Padding="0"
                             Width="16"
                             Height="16"
                             MinWidth="0"
                             MinHeight="0"
-                            HorizontalAlignment="Right"
                             VerticalAlignment="Center"
                             RenderTransformOrigin="1,0.5"
-                            Background="{ThemeResource ControlFillColorDefaultBrush}"
-                            BorderThickness="0.5"
-                            BorderBrush="{ThemeResource ControlElevationBorderBrush}"
                             CornerRadius="2.5,2.5,2.5,2.5"
-                            Checked="RandomizeIntervalButton_CheckedChanged"
-                            Unchecked="RandomizeIntervalButton_CheckedChanged"
-                            AutomationProperties.AutomationId="RandomizeIntervalButton"
-                            AutomationProperties.Name="Randomize interval, Off"
-                            ToolTipService.ToolTip="Randomize interval: Off">
-                            <ToggleButton.RenderTransform>
+                            AutomationProperties.AutomationId="IntervalOptionsButton"
+                            AutomationProperties.Name="Interval options"
+                            ToolTipService.ToolTip="More options">
+                            <Button.RenderTransform>
                                 <ScaleTransform ScaleX="1.5" ScaleY="1.5" />
-                            </ToggleButton.RenderTransform>
-                            <ToggleButton.Resources>
-                                <SolidColorBrush x:Key="ToggleButtonBackgroundDisabled" Color="Transparent" />
-                                <SolidColorBrush x:Key="ToggleButtonBorderBrushDisabled" Color="Transparent" />
-                            </ToggleButton.Resources>
-                            <FontIcon
-                                x:Name="RandomizeIntervalIcon"
-                                Glyph="&#xE8B1;"
-                                FontSize="14"
-                                RenderTransformOrigin="0.5,0.5">
+                            </Button.RenderTransform>
+                            <FontIcon Glyph="&#xE9E9;" FontSize="14" RenderTransformOrigin="0.5,0.5">
                                 <FontIcon.RenderTransform>
                                     <ScaleTransform ScaleX="0.66666667" ScaleY="0.66666667" />
                                 </FontIcon.RenderTransform>
                             </FontIcon>
-                        </ToggleButton>
+                            <Button.Flyout>
+                                <!-- IntervalOptionsFlyout: randomize-interval toggle, up to 6 one-click
+                                     apply-this-preset buttons (2 rows of 3 - RefreshIntervalPresetFlyoutButtons
+                                     collapses whichever slots exceed the configured preset count), and an
+                                     "Edit presets" button that arms in-place edit-selection mode on these
+                                     same preset buttons rather than opening anything of its own.
+                                     Closed="IntervalOptionsFlyout_Closed" is the safety net for the
+                                     armed-but-nothing-picked-yet state (light-dismissing while armed resets
+                                     back to normal). Opening="IntervalOptionsFlyout_Opening" unconditionally
+                                     clears _intervalPresetUndoStack every time the flyout (re)opens. -->
+                                <Flyout x:Name="IntervalOptionsFlyout" Placement="BottomEdgeAlignedRight" Opening="IntervalOptionsFlyout_Opening" Closed="IntervalOptionsFlyout_Closed">
+                                    <StackPanel Spacing="12" MinWidth="245" MaxWidth="266">
+                                        <!-- Presets title + grid + Edit button, grouped into their own
+                                             tight-Spacing StackPanel so the three read as one block, while
+                                             still getting the outer StackPanel's full Spacing="12" gap from
+                                             the Randomize toggle row below. IntervalPresetsFlyoutTitle
+                                             shares IntervalPresetFlyoutGrid's show/hide rule (both Collapsed
+                                             together at 0 presets - see RefreshIntervalPresetFlyoutButtons);
+                                             its text also swaps to a short instruction while edit mode is
+                                             armed. -->
+                                        <StackPanel Spacing="6">
+                                        <TextBlock
+                                            x:Name="IntervalPresetsFlyoutTitle"
+                                            Text="Presets"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                                        <!-- Up to 6 one-shot "apply this preset" Buttons, 3 per row (max 2
+                                             rows) - plain Buttons (not ToggleButtons): while edit mode isn't
+                                             armed, clicking one applies its value straight to the live
+                                             interval (IntervalPresetFlyoutButton_Click/ApplyIntervalPreset)
+                                             and closes the flyout; while armed, the same click instead
+                                             selects that slot for inline editing on the Interval card
+                                             (SelectIntervalPresetForEditing). IntervalPresetFlyoutGrid is
+                                             Collapsed entirely at 0 configured presets. A StackPanel of 2
+                                             per-row Grids (rather than one Grid with RowDefinitions +
+                                             RowSpacing) so an unused row can be Collapsed outright without
+                                             still reserving its spacing gap - see RefreshIntervalPresetFlyoutButtons,
+                                             which Collapses IntervalPresetFlyoutRow2 once the configured count
+                                             no longer reaches into it. The Add tile (IntervalPresetAddTileButton)
+                                             lives in the Edit/Delete/Undo/Restore action row below, not in this
+                                             grid. -->
+                                        <StackPanel x:Name="IntervalPresetFlyoutGrid" Spacing="6">
+                                            <Grid x:Name="IntervalPresetFlyoutRow1" ColumnSpacing="6">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <!-- Each numbered preset button gets its own right-click ContextFlyout (a MenuFlyout with
+                                                     "Use preset"/"Edit"/"Delete") rather than one shared Flyout, so each MenuFlyoutItem's Tag
+                                                     (this button's 0-based index) can be a plain XAML literal. "Edit"/"Delete" call
+                                                     SelectIntervalPresetForEditing/DeleteIntervalPreset directly, a shortcut past the
+                                                     arm-then-click flow. "Use preset"'s IsEnabled is kept in sync with
+                                                     !_isIntervalPresetEditArmed by RefreshIntervalPresetFlyoutButtons. -->
+                                                <Button x:Name="IntervalPresetFlyoutButton1" Grid.Column="0" Height="29" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" FontSize="12" Padding="10,4" Click="IntervalPresetFlyoutButton_Click" AutomationProperties.AutomationId="IntervalPresetFlyoutButton1" AutomationProperties.Name="Interval preset 1">
+                                                    <Button.ContextFlyout>
+                                                        <MenuFlyout>
+                                                            <MenuFlyoutItem x:Name="IntervalPresetUseMenuItem1" Text="Use preset" Tag="0" Click="IntervalPresetUseMenuItem_Click" />
+                                                            <MenuFlyoutItem Text="Edit" Tag="0" Click="IntervalPresetEditMenuItem_Click" />
+                                                            <MenuFlyoutItem Text="Delete" Tag="0" Click="IntervalPresetDeleteMenuItem_Click" />
+                                                        </MenuFlyout>
+                                                    </Button.ContextFlyout>
+                                                </Button>
+                                                <Button x:Name="IntervalPresetFlyoutButton2" Grid.Column="1" Height="29" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" FontSize="12" Padding="10,4" Click="IntervalPresetFlyoutButton_Click" AutomationProperties.AutomationId="IntervalPresetFlyoutButton2" AutomationProperties.Name="Interval preset 2">
+                                                    <Button.ContextFlyout>
+                                                        <MenuFlyout>
+                                                            <MenuFlyoutItem x:Name="IntervalPresetUseMenuItem2" Text="Use preset" Tag="1" Click="IntervalPresetUseMenuItem_Click" />
+                                                            <MenuFlyoutItem Text="Edit" Tag="1" Click="IntervalPresetEditMenuItem_Click" />
+                                                            <MenuFlyoutItem Text="Delete" Tag="1" Click="IntervalPresetDeleteMenuItem_Click" />
+                                                        </MenuFlyout>
+                                                    </Button.ContextFlyout>
+                                                </Button>
+                                                <Button x:Name="IntervalPresetFlyoutButton3" Grid.Column="2" Height="29" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" FontSize="12" Padding="10,4" Click="IntervalPresetFlyoutButton_Click" AutomationProperties.AutomationId="IntervalPresetFlyoutButton3" AutomationProperties.Name="Interval preset 3">
+                                                    <Button.ContextFlyout>
+                                                        <MenuFlyout>
+                                                            <MenuFlyoutItem x:Name="IntervalPresetUseMenuItem3" Text="Use preset" Tag="2" Click="IntervalPresetUseMenuItem_Click" />
+                                                            <MenuFlyoutItem Text="Edit" Tag="2" Click="IntervalPresetEditMenuItem_Click" />
+                                                            <MenuFlyoutItem Text="Delete" Tag="2" Click="IntervalPresetDeleteMenuItem_Click" />
+                                                        </MenuFlyout>
+                                                    </Button.ContextFlyout>
+                                                </Button>
+                                            </Grid>
+                                            <Grid x:Name="IntervalPresetFlyoutRow2" ColumnSpacing="6">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Button x:Name="IntervalPresetFlyoutButton4" Grid.Column="0" Height="29" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" FontSize="12" Padding="10,4" Click="IntervalPresetFlyoutButton_Click" AutomationProperties.AutomationId="IntervalPresetFlyoutButton4" AutomationProperties.Name="Interval preset 4">
+                                                    <Button.ContextFlyout>
+                                                        <MenuFlyout>
+                                                            <MenuFlyoutItem x:Name="IntervalPresetUseMenuItem4" Text="Use preset" Tag="3" Click="IntervalPresetUseMenuItem_Click" />
+                                                            <MenuFlyoutItem Text="Edit" Tag="3" Click="IntervalPresetEditMenuItem_Click" />
+                                                            <MenuFlyoutItem Text="Delete" Tag="3" Click="IntervalPresetDeleteMenuItem_Click" />
+                                                        </MenuFlyout>
+                                                    </Button.ContextFlyout>
+                                                </Button>
+                                                <Button x:Name="IntervalPresetFlyoutButton5" Grid.Column="1" Height="29" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" FontSize="12" Padding="10,4" Click="IntervalPresetFlyoutButton_Click" AutomationProperties.AutomationId="IntervalPresetFlyoutButton5" AutomationProperties.Name="Interval preset 5">
+                                                    <Button.ContextFlyout>
+                                                        <MenuFlyout>
+                                                            <MenuFlyoutItem x:Name="IntervalPresetUseMenuItem5" Text="Use preset" Tag="4" Click="IntervalPresetUseMenuItem_Click" />
+                                                            <MenuFlyoutItem Text="Edit" Tag="4" Click="IntervalPresetEditMenuItem_Click" />
+                                                            <MenuFlyoutItem Text="Delete" Tag="4" Click="IntervalPresetDeleteMenuItem_Click" />
+                                                        </MenuFlyout>
+                                                    </Button.ContextFlyout>
+                                                </Button>
+                                                <Button x:Name="IntervalPresetFlyoutButton6" Grid.Column="2" Height="29" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" FontSize="12" Padding="10,4" Click="IntervalPresetFlyoutButton_Click" AutomationProperties.AutomationId="IntervalPresetFlyoutButton6" AutomationProperties.Name="Interval preset 6">
+                                                    <Button.ContextFlyout>
+                                                        <MenuFlyout>
+                                                            <MenuFlyoutItem x:Name="IntervalPresetUseMenuItem6" Text="Use preset" Tag="5" Click="IntervalPresetUseMenuItem_Click" />
+                                                            <MenuFlyoutItem Text="Edit" Tag="5" Click="IntervalPresetEditMenuItem_Click" />
+                                                            <MenuFlyoutItem Text="Delete" Tag="5" Click="IntervalPresetDeleteMenuItem_Click" />
+                                                        </MenuFlyout>
+                                                    </Button.ContextFlyout>
+                                                </Button>
+                                            </Grid>
+                                        </StackPanel>
+
+                                        <!-- Edit/Add sit in a left-pinned group, Delete/Undo/Restore in a right-pinned group -
+                                             IntervalPresetActionsSpacerColumn between them is a fixed 6px (matching the preset buttons'
+                                             own ColumnSpacing="6") while unarmed, so both groups just read as one flat row with normal
+                                             gaps, same as before this split existed. Only while armed does RefreshIntervalPresetFlyoutButtons
+                                             widen it to "*", pushing Delete/Undo/Restore flush to the flyout's right edge while Edit/Add
+                                             stay flush left - most of the time the flyout isn't wide enough for this to matter, but it
+                                             reads better on a wider flyout. MinWidth="6" keeps that same minimum gap even then: a "*"
+                                             column with no leftover width to distribute otherwise collapses to 0, which would leave Add
+                                             and Delete touching. Each group is its own horizontal StackPanel Spacing="6", so gaps within
+                                             a group look identical to gaps between groups when unarmed. -->
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition x:Name="IntervalPresetActionsSpacerColumn" Width="6" MinWidth="6" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
+                                        <ToggleButton
+                                            x:Name="IntervalPresetsEditButton"
+                                            HorizontalAlignment="Left"
+                                            Click="IntervalPresetsEditButton_Click"
+                                            AutomationProperties.AutomationId="IntervalPresetsEditButton"
+                                            AutomationProperties.Name="Edit interval presets">
+                                            <Grid ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <FontIcon
+                                                    Grid.Column="0"
+                                                    Glyph="&#xE70F;"
+                                                    FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                                                    FontSize="13"
+                                                    VerticalAlignment="Center"
+                                                    AutomationProperties.AccessibilityView="Raw" />
+                                                <TextBlock
+                                                    Grid.Column="1"
+                                                    Text="Edit"
+                                                    FontSize="12"
+                                                    HorizontalAlignment="Left"
+                                                    VerticalAlignment="Center" />
+                                            </Grid>
+                                        </ToggleButton>
+                                        <!-- Add tile: sits right next to Edit, icon+caption like Edit above ("Add" - kept short since
+                                             it already sits next to a numbered preset grid for context, unlike IntervalPresetsAddButton
+                                             below). Only visible while edit is armed, delete isn't, and count &lt; MaxIntervalPresets
+                                             (RefreshIntervalPresetFlyoutButtons) - hidden outright otherwise so there's nothing to click
+                                             that would silently no-op. A plain Button (one-shot navigation), not a ToggleButton. Its Click
+                                             handler calls EnterIntervalPresetAddMode directly. -->
+                                        <Button
+                                            x:Name="IntervalPresetAddTileButton"
+                                            HorizontalAlignment="Left"
+                                            Visibility="Collapsed"
+                                            Click="IntervalPresetAddTileButton_Click"
+                                            AutomationProperties.AutomationId="IntervalPresetAddTileButton"
+                                            AutomationProperties.Name="Add interval preset">
+                                            <Grid ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <FontIcon
+                                                    Grid.Column="0"
+                                                    Glyph="&#xE710;"
+                                                    FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                                                    FontSize="13"
+                                                    VerticalAlignment="Center"
+                                                    AutomationProperties.AccessibilityView="Raw" />
+                                                <TextBlock
+                                                    Grid.Column="1"
+                                                    Text="Add"
+                                                    FontSize="12"
+                                                    HorizontalAlignment="Left"
+                                                    VerticalAlignment="Center" />
+                                            </Grid>
+                                        </Button>
+                                        <!-- Add preset - takes IntervalPresetsEditButton's place only at 0 configured presets while
+                                             unarmed (RefreshIntervalPresetFlyoutButtons), so an empty preset list doesn't strand the user
+                                             on a bare "Edit" button with nothing to edit. Same icon+caption layout as Edit above, but a
+                                             plain Button since it's a one-shot navigation straight into add mode
+                                             (EnterIntervalPresetAddMode), same as IntervalPresetAddTileButton's own Click handler - unlike
+                                             that one, this one uses the fuller "Add preset" label since it stands alone here with no
+                                             numbered presets around it for context. -->
+                                        <Button
+                                            x:Name="IntervalPresetsAddButton"
+                                            HorizontalAlignment="Left"
+                                            Visibility="Collapsed"
+                                            Click="IntervalPresetsAddButton_Click"
+                                            AutomationProperties.AutomationId="IntervalPresetsAddButton"
+                                            AutomationProperties.Name="Add interval preset">
+                                            <Grid ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <FontIcon
+                                                    Grid.Column="0"
+                                                    Glyph="&#xE710;"
+                                                    FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                                                    FontSize="13"
+                                                    VerticalAlignment="Center"
+                                                    AutomationProperties.AccessibilityView="Raw" />
+                                                <TextBlock
+                                                    Grid.Column="1"
+                                                    Text="Add preset"
+                                                    FontSize="12"
+                                                    HorizontalAlignment="Left"
+                                                    VerticalAlignment="Center" />
+                                            </Grid>
+                                        </Button>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
+                                        <!-- Delete presets: only visible while IntervalPresetsEditButton
+                                             is armed (RefreshIntervalPresetFlyoutButtons). A ToggleButton,
+                                             IsChecked mirroring _isIntervalPresetDeleteArmed - while
+                                             checked, IntervalPresetFlyoutButton_Click's click deletes the
+                                             clicked slot outright instead of selecting it for editing,
+                                             staying armed afterward so multiple presets can be deleted in
+                                             a row without re-toggling. Icon-only (like Undo/Restore below),
+                                             Width/Height="29" matches their real measured height. -->
+                                        <ToggleButton
+                                            x:Name="IntervalPresetsDeleteButton"
+                                            Width="29"
+                                            Height="29"
+                                            Padding="0"
+                                            HorizontalAlignment="Left"
+                                            HorizontalContentAlignment="Center"
+                                            Visibility="Collapsed"
+                                            Click="IntervalPresetsDeleteButton_Click"
+                                            AutomationProperties.AutomationId="IntervalPresetsDeleteButton"
+                                            AutomationProperties.Name="Delete interval presets"
+                                            ToolTipService.ToolTip="Delete">
+                                            <FontIcon
+                                                Glyph="&#xE74D;"
+                                                FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                                                FontSize="13"
+                                                AutomationProperties.AccessibilityView="Raw" />
+                                        </ToggleButton>
+                                        <!-- Undo: reverses the most recent action (a delete or a Restore-to-defaults) from the current
+                                             flyout-open session - see _intervalPresetUndoStack's own field comment. A delete's preset is
+                                             appended back onto the end of the live Lists (not its original index); a Restore is undone by
+                                             replacing the live Lists wholesale with the pre-Restore snapshot. Visibility is
+                                             "_isIntervalPresetEditArmed OR (stack non-empty AND NOT _isIntervalPresetUndoDismissed)": while
+                                             Edit is armed, Undo is always visible even with nothing to undo yet (IsEnabled reflects that
+                                             separately). While unarmed, an action taken via right-click still shows this button, but
+                                             explicitly un-arming Edit afterward hides it again, and re-arming brings it straight back.
+                                             IsEnabled mirrors "stack non-empty" alone, kept in sync by RefreshIntervalPresetFlyoutButtons.
+                                             Icon-only, a plain Button (not a ToggleButton). Width/Height="29" matches the other buttons in
+                                             this flyout's real measured height. -->
+                                        <Button
+                                            x:Name="IntervalPresetsUndoButton"
+                                            Width="29"
+                                            Height="29"
+                                            Padding="0"
+                                            HorizontalAlignment="Left"
+                                            HorizontalContentAlignment="Center"
+                                            IsEnabled="False"
+                                            Visibility="Collapsed"
+                                            Click="IntervalPresetsUndoButton_Click"
+                                            AutomationProperties.AutomationId="IntervalPresetsUndoButton"
+                                            AutomationProperties.Name="Undo last interval preset action"
+                                            ToolTipService.ToolTip="Undo">
+                                            <FontIcon
+                                                Glyph="&#xE7A7;"
+                                                FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                                                FontSize="13"
+                                                AutomationProperties.AccessibilityView="Raw" />
+                                        </Button>
+                                        <!-- Restore default presets: one-shot reset of all four staged Lists back to AppConfig's
+                                             hardcoded defaults (100ms/15s/1m, 3 presets). Pushes a snapshot of the pre-Restore values
+                                             onto _intervalPresetUndoStack so this reset is itself undoable, chaining with any prior pending
+                                             delete-undo entries rather than wiping them out. Visible whenever Edit is armed, or at 0
+                                             configured presets regardless of armed state (unlike Undo, which also stays visible
+                                             unarmed-but-not-dismissed). IsEnabled is ANDed with
+                                             !IntervalPresetsMatchDefaults(), so clicking Restore while already at defaults can't push a
+                                             meaningless no-op action onto the undo stack. Square Width/Height="29", same as
+                                             IntervalPresetsUndoButton above. -->
+                                        <Button
+                                            x:Name="IntervalPresetsRestoreDefaultsButton"
+                                            Width="29"
+                                            Height="29"
+                                            Padding="0"
+                                            HorizontalAlignment="Left"
+                                            HorizontalContentAlignment="Center"
+                                            Visibility="Collapsed"
+                                            Click="IntervalPresetsRestoreDefaultsButton_Click"
+                                            AutomationProperties.AutomationId="IntervalPresetsRestoreDefaultsButton"
+                                            AutomationProperties.Name="Restore default interval presets"
+                                            ToolTipService.ToolTip="Restore default presets">
+                                            <FontIcon
+                                                Glyph="&#xE777;"
+                                                FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                                                FontSize="13"
+                                                AutomationProperties.AccessibilityView="Raw" />
+                                        </Button>
+                                        </StackPanel>
+                                        </Grid>
+                                        </StackPanel>
+
+                                        <!-- "Options" title + a bordered card holding both toggle rows,
+                                             separated by a thin divider - same visual language as this
+                                             app's SettingsCard rows (Controls/SettingsPanel.xaml), built
+                                             here as a plain Border since a real SettingsExpander would add
+                                             an unwanted collapse/expand chevron and its own header row this
+                                             flyout's "Options" caption above already covers. Each row is a
+                                             Grid with a "*" label column and an "Auto" toggle column, so the
+                                             label stays left and the toggle stays pinned right regardless of
+                                             label text length - unlike the old horizontal StackPanel rows,
+                                             which only worked because both labels happened to be short. -->
+                                        <StackPanel Spacing="6">
+                                        <TextBlock
+                                            Text="Options"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                                        <Border
+                                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="{ThemeResource ControlCornerRadius}">
+                                        <StackPanel>
+                                        <!-- Randomize-interval toggle - relocated verbatim from the old
+                                             RandomizeIntervalButton (see this Button's own comment above):
+                                             preserves _isRandomizeIntervalEnabled/the locked-while-running
+                                             behavior (see RandomizeIntervalToggle_Toggled/
+                                             UpdateRandomizeIntervalIndicator), just as a real ToggleSwitch +
+                                             label now instead of an icon-only ToggleButton - a plain
+                                             ToggleSwitch's own built-in Enabled/Disabled visual states
+                                             already dim it appropriately while locked, so none of
+                                             UpdateRandomizeIntervalIndicator's old custom Foreground/Opacity
+                                             per-state icon-coloring logic is needed anymore; that method now
+                                             only refreshes AutomationProperties.Name/ToolTip. -->
+                                        <!-- ToggleSwitch's own Margin="0,-8,0,-8" cancels out its built-in
+                                             top/bottom empty-header padding (present even with
+                                             Padding="0" - same fix AutoStopPickDateToggle's own comment
+                                             elsewhere in this file uses), so the row's actual height is
+                                             governed by this Grid's own Padding alone. -->
+                                        <Grid ColumnSpacing="8" Padding="12,6,12,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel
+                                                Grid.Column="0"
+                                                Orientation="Horizontal"
+                                                Spacing="8"
+                                                VerticalAlignment="Center">
+                                                <FontIcon x:Name="RandomizeIntervalOptionIcon" FontSize="14" Glyph="&#xE8B1;" VerticalAlignment="Center" />
+                                                <controls:DimmableLabel
+                                                    x:Name="RandomizeIntervalLabel"
+                                                    VerticalAlignment="Center"
+                                                    Style="{StaticResource RandomizeIntervalLabelStyle}" />
+                                            </StackPanel>
+                                            <ToggleSwitch
+                                                Grid.Column="1"
+                                                x:Name="RandomizeIntervalToggle"
+                                                OnContent=""
+                                                OffContent=""
+                                                MinWidth="0"
+                                                Width="44"
+                                                Padding="0"
+                                                Margin="0,-8,0,-8"
+                                                VerticalAlignment="Center"
+                                                Toggled="RandomizeIntervalToggle_Toggled"
+                                                AutomationProperties.AutomationId="RandomizeIntervalToggle"
+                                                AutomationProperties.Name="Randomize interval, Off"
+                                                ToolTipService.ToolTip="Randomize interval: Off" />
+                                        </Grid>
+
+                                        <Border Height="1" Margin="12,0,12,0" Background="{ThemeResource CardStrokeColorDefaultBrush}" />
+
+                                        <!-- Advanced-interval-display toggle - mirrors the Randomize row
+                                             immediately above (same compact ToggleSwitch styling), letting
+                                             this be flipped right from the Interval card's own flyout
+                                             instead of only from the Settings panel's IntervalDisplayExpander
+                                             RadioButtons. Both controls stay in sync against the same
+                                             AppConfig.ShowAdvancedIntervalDisplay key - see
+                                             MainWindow.UpdateAdvancedIntervalDisplayMode/
+                                             IntervalDisplayToggle_Toggled and
+                                             SettingsPanel.SetShowAdvancedIntervalDisplay. -->
+                                        <Grid ColumnSpacing="8" Padding="12,6,12,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel
+                                                Grid.Column="0"
+                                                Orientation="Horizontal"
+                                                Spacing="8"
+                                                VerticalAlignment="Center">
+                                                <FontIcon x:Name="FullIntervalDisplayOptionIcon" FontSize="14" Glyph="&#xE917;" VerticalAlignment="Center" />
+                                                <controls:DimmableLabel
+                                                    x:Name="FullIntervalDisplayLabel"
+                                                    VerticalAlignment="Center"
+                                                    Style="{StaticResource FullIntervalDisplayLabelStyle}" />
+                                            </StackPanel>
+                                            <ToggleSwitch
+                                                Grid.Column="1"
+                                                x:Name="IntervalDisplayToggle"
+                                                OnContent=""
+                                                OffContent=""
+                                                MinWidth="0"
+                                                Width="44"
+                                                Padding="0"
+                                                Margin="0,-8,0,-8"
+                                                VerticalAlignment="Center"
+                                                Toggled="IntervalDisplayToggle_Toggled"
+                                                AutomationProperties.AutomationId="IntervalDisplayToggle"
+                                                AutomationProperties.Name="Full interval display, Off"
+                                                ToolTipService.ToolTip="Full interval display: Off" />
+                                        </Grid>
+                                        </StackPanel>
+                                        </Border>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
+                        </StackPanel>
                     </Grid>
 
-                    <!-- Basic Minutes/Seconds row - unchanged internally, just named so
-                         UpdateAdvancedIntervalDisplayMode can toggle its Visibility opposite
-                         AdvancedIntervalRow below. SecondsBox.Maximum is 59.999 (not 59.95) so a
-                         combined Seconds+Milliseconds value entered in the advanced row (up to 59.999)
-                         round-trips into this box without NumberBox's own Maximum clamping silently
-                         losing up to 49ms of precision. MinutesBox.Maximum is 99999959 (not
-                         100000000) so that 1,666,665h + 59m + 59s + 999ms (AdvancedIntervalRow's own
-                         maxed-out combination below) converts to exactly 99,999,959m + 59.999s here -
-                         the two rows' maximums are deliberately consistent with each other. Neither box
-                         allows decimals/extra-fraction-digit input to actually stick in .Value though -
-                         MinutesBox truncates (floors) any fractional part and SecondsBox truncates
-                         beyond 3 decimal places, both on commit (IntervalBox_ValueChanged) and, for
-                         hotkey-triggered starts that never commit/blur, on every keystroke
-                         (ReadCommittedOrTypedValue) - see both methods' doc comments. -->
+                    <!-- Basic Minutes/Seconds row - named so UpdateAdvancedIntervalDisplayMode can
+                         toggle its Visibility opposite AdvancedIntervalRow below. SecondsBox.Maximum is
+                         59.999 (not 59.95) so a combined Seconds+Milliseconds value entered in the
+                         advanced row round-trips here without losing up to 49ms of precision.
+                         MinutesBox.Maximum is 99999959 so AdvancedIntervalRow's own maxed-out
+                         combination (1,666,665h 59m 59s 999ms) converts exactly - the two rows' maximums
+                         are deliberately consistent. Neither box allows decimals to actually stick in
+                         .Value: MinutesBox truncates any fractional part, SecondsBox truncates beyond 3
+                         decimal places, both on commit (IntervalBox_ValueChanged) and, for hotkey-triggered
+                         starts that never blur, on every keystroke (ReadCommittedOrTypedValue). -->
                     <Grid x:Name="BasicIntervalRow" Grid.Row="2" ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <!-- Maximum is deliberately NOT declared here as a XAML attribute - confirmed
-                             empirically that WinUI's XAML compiler round-trips large double attribute
-                             values through a 32-bit float somewhere in its compiled binary (XBF)
-                             encoding, and 99999959 (~1e8, above float32's exact-integer range of 2^24 =
-                             16,777,216) silently became 99999960 at runtime as a result (off by one -
-                             confirmed by reading sender.Maximum back at runtime, not assumed). Set
-                             precisely in the constructor instead (see MainWindow() - MinutesBox.Maximum
-                             = 99999959d), which is a plain C# double assignment with no such precision
-                             loss. HoursBox/AdvancedMinutesBox/AdvancedSecondsBox/MillisecondsBox's own
-                             Maximums below are all comfortably under 2^24 so don't need this workaround. -->
+                        <!-- Maximum is deliberately NOT declared here as a XAML attribute: WinUI's XAML
+                             compiler round-trips large double attributes through a 32-bit float in its
+                             compiled (XBF) encoding, and 99999959 (above float32's exact-integer range
+                             of 2^24) silently became 99999960 at runtime. Set in the constructor instead
+                             (MinutesBox.Maximum = 99999959d), a plain C# assignment with no such
+                             precision loss. HoursBox/AdvancedMinutesBox/AdvancedSecondsBox/MillisecondsBox's
+                             own Maximums below are comfortably under 2^24 so don't need this workaround. -->
                         <NumberBox
                             x:Name="MinutesBox"
                             Grid.Column="0"
@@ -475,6 +868,7 @@
                             LargeChange="5"
                             SpinButtonPlacementMode="Compact"
                             ValueChanged="IntervalBox_ValueChanged"
+                            PreviewKeyDown="IntervalPresetField_KeyDown"
                             AutomationProperties.AutomationId="MinutesBox" />
                         <NumberBox
                             x:Name="SecondsBox"
@@ -487,61 +881,36 @@
                             LargeChange="5"
                             SpinButtonPlacementMode="Compact"
                             ValueChanged="IntervalBox_ValueChanged"
+                            PreviewKeyDown="IntervalPresetField_KeyDown"
                             AutomationProperties.AutomationId="SecondsBox" />
                     </Grid>
 
-                    <!-- Advanced Hours/Minutes/Seconds/Milliseconds row - Collapsed initially in XAML,
-                         reconciled against the persisted config.ShowAdvancedIntervalDisplay setting at
-                         startup by UpdateAdvancedIntervalDisplayMode (called from LoadConfigIntoUi), so
-                         it may end up Visible immediately if that setting was last left on. These are
-                         NumberBox (not plain TextBox), each with its own Minimum/Maximum declared here -
-                         Hours<=1,666,665, Minutes/Seconds<=59, Milliseconds<=999 (deliberately
-                         consistent with BasicIntervalRow's MinutesBox.Maximum="99999959" above - see
-                         that row's own comment) - but confirmed empirically (not assumed) that
-                         NumberBox does NOT actually clamp typed/committed text to these bounds on its
-                         own: Minimum/Maximum only constrain the (hidden, here) spin buttons/arrow keys.
-                         The actual clamping (plus truncation - see below) happens explicitly in code,
-                         in AdvancedIntervalBox_ValueChanged. SpinButtonPlacementMode="Hidden" hides the
-                         spin-button arrows entirely (unlike "Compact", which would pop a floating
-                         spinner on focus/hover) so these four still read as plain narrow text fields
-                         visually. No decimals stick in .Value either - truncated (floored) to a whole
-                         number on commit, in that same AdvancedIntervalBox_ValueChanged handler - and
-                         none of this is wired through XAML TextChanged anymore: the live,
-                         every-keystroke sync back into
-                         MinutesBox.Value/SecondsBox.Value (still the only thing
-                         PowerToggleButton_Checked ever reads at Start time, including for
-                         hotkey-triggered starts that never blur any field) instead hooks each box's own
-                         inner "InputBox" TextBox part directly once its template loads - see
-                         InitializeAdvancedIntervalLiveSync/AdvancedIntervalInputBox_TextChanged - since
-                         NumberBox.ValueChanged only fires on commit, not on every keystroke, and a
-                         hotkey press never commits anything. MaxLength (7/2/2/3, matching each field's
-                         own Maximum's digit count) is likewise set on each box's inner InputBox from
-                         code, in the same place, since NumberBox doesn't expose MaxLength itself.
-                         ColumnSpacing is tighter than BasicIntervalRow's (12) - 6 here - and FontSize is
-                         12 (down from the default ~14/15) on all four boxes, uniformly, so the header
-                         text stays legible and consistently sized across the row: without this,
-                         "Milliseconds" (by far the longest of the four headers) wrapped onto two lines
-                         at the default font size/spacing in this card's ~330px usable width, which grew
-                         the row's height unevenly against its neighbors and looked cramped - confirmed
-                         by screenshot before this fix, and reconfirmed one-line after it. NumberBox's
-                         own default ControlTemplate binds its Header's FontSize to the NumberBox's own
-                         FontSize (same as TextBox's did before this row's TextBox->NumberBox
-                         conversion - see generic.xaml), so this one property would shrink both the
-                         header and the input text together if left alone - the input text is restored
-                         to regular size separately, in code (see HookAdvancedIntervalBoxLiveSync's own
-                         comment on inputBox.FontSize), since only the Header caption needs to stay small.
+                    <!-- Advanced Hours/Minutes/Seconds/Milliseconds row - Collapsed initially, reconciled
+                         against config.ShowAdvancedIntervalDisplay at startup by
+                         UpdateAdvancedIntervalDisplayMode. Each NumberBox declares its own Minimum/Maximum
+                         (Hours<=1,666,665, Minutes/Seconds<=59, Milliseconds<=999, consistent with
+                         BasicIntervalRow's MinutesBox.Maximum="99999959"), but NumberBox does NOT actually
+                         clamp typed/committed text to these bounds on its own - Minimum/Maximum only
+                         constrain the (hidden here) spin buttons/arrow keys. Actual clamping and
+                         truncation happen explicitly in AdvancedIntervalBox_ValueChanged.
+                         SpinButtonPlacementMode="Hidden" keeps these reading as plain narrow text fields.
+                         The live, every-keystroke sync back into MinutesBox.Value/SecondsBox.Value (the
+                         only thing PowerToggleButton_Checked reads at Start) hooks each box's inner
+                         "InputBox" TextBox part directly (see InitializeAdvancedIntervalLiveSync/
+                         AdvancedIntervalInputBox_TextChanged), since NumberBox.ValueChanged only fires on
+                         commit and a hotkey press never commits. MaxLength (7/2/2/3) is likewise set on
+                         each inner InputBox from code, since NumberBox doesn't expose MaxLength itself.
+                         FontSize="12" on all four boxes keeps the header text legible and consistently
+                         sized across the row (default size wrapped "Milliseconds" onto two lines in this
+                         card's ~330px width); the input text itself is restored to regular size separately
+                         in code (see HookAdvancedIntervalBoxLiveSync), since NumberBox's Header inherits
+                         the box's own FontSize otherwise.
+                         AdvancedIntervalRow renders slightly shorter than BasicIntervalRow, since the
+                         smaller Header text shrinks while the input area stays floored at the same
+                         TextControlThemeMinHeight both rows share. The surrounding Grid's Row 1 ("*"-height
+                         spacer, MinHeight="12") absorbs the difference so both rows stay pinned to the
+                         card's bottom edge regardless of which is visible. -->
 
-                         AdvancedIntervalRow renders about 3px shorter than BasicIntervalRow - root
-                         cause (confirmed by testing, not assumed): at FontSize=12 the Header text's own
-                         line-height shrinks, while the input area itself stays floored at the same
-                         TextControlThemeMinHeight (32px, see generic.xaml) both rows share, so the
-                         entire difference comes from the Header, not the input box. Rather than pad
-                         this row back out to match, the surrounding Grid's Row 1 (a "*"-height spacer
-                         between the header and both interval rows, MinHeight="12") absorbs whichever
-                         row is shorter, so BasicIntervalRow/AdvancedIntervalRow (both Grid.Row="2") stay
-                         pinned to the card's bottom edge regardless of which is visible - see the outer
-                         Border's MinHeight comment for how the card's overall height is kept stable
-                         across the toggle. -->
                     <Grid x:Name="AdvancedIntervalRow" Grid.Row="2" ColumnSpacing="6" Visibility="Collapsed">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
@@ -559,6 +928,7 @@
                             Maximum="1666665"
                             SpinButtonPlacementMode="Hidden"
                             ValueChanged="AdvancedIntervalBox_ValueChanged"
+                            PreviewKeyDown="IntervalPresetField_KeyDown"
                             AutomationProperties.AutomationId="HoursBox" />
                         <NumberBox
                             x:Name="AdvancedMinutesBox"
@@ -570,6 +940,7 @@
                             Maximum="59"
                             SpinButtonPlacementMode="Hidden"
                             ValueChanged="AdvancedIntervalBox_ValueChanged"
+                            PreviewKeyDown="IntervalPresetField_KeyDown"
                             AutomationProperties.AutomationId="AdvancedMinutesBox" />
                         <NumberBox
                             x:Name="AdvancedSecondsBox"
@@ -581,6 +952,7 @@
                             Maximum="59"
                             SpinButtonPlacementMode="Hidden"
                             ValueChanged="AdvancedIntervalBox_ValueChanged"
+                            PreviewKeyDown="IntervalPresetField_KeyDown"
                             AutomationProperties.AutomationId="AdvancedSecondsBox" />
                         <NumberBox
                             x:Name="MillisecondsBox"
@@ -592,6 +964,7 @@
                             Maximum="999"
                             SpinButtonPlacementMode="Hidden"
                             ValueChanged="AdvancedIntervalBox_ValueChanged"
+                            PreviewKeyDown="IntervalPresetField_KeyDown"
                             AutomationProperties.AutomationId="MillisecondsBox" />
                     </Grid>
                 </Grid>
@@ -626,17 +999,14 @@
                             AutomationProperties.Name="Automatically stop" />
                     </Grid>
                     <!-- Single text-field-styled Button that opens AutoStopDialog, a centered, modal
-                         ContentDialog letting the user configure exactly one of two mutually exclusive
-                         Auto Stop modes: after a number of clicks/jiggles, or at a specific date & time
-                         (see AutoStopButton_Click and AutoStopDialog below). Before the user has
-                         configured either mode once, the button shows the "Configure..." placeholder;
-                         afterwards it shows a summary of whichever mode is configured, with an icon
-                         (AutoStopIcon) that swaps between Calendar and Refresh to match - all kept in
+                         ContentDialog letting the user configure one of several mutually exclusive Auto
+                         Stop modes (see AutoStopButton_Click and AutoStopDialog below). Before the user
+                         has configured a mode, the button shows the "Configure..." placeholder;
+                         afterwards it shows a summary with a matching icon (AutoStopIcon) - both kept in
                          sync by UpdateAutoStopButtonLabel() in code-behind. -->
                     <!-- Content is a Grid (label + icon) instead of a plain string so the icon can dock
-                         to the right edge while the caption stays embedded on the left - see
-                         AutoStopButtonLabel's comment history above (now removed) for why: Button.Content
-                         is never replaced wholesale, only AutoStopButtonLabel.Text/AutoStopIcon.Glyph. -->
+                         to the right edge while the caption stays embedded on the left; Button.Content is
+                         never replaced wholesale, only AutoStopButtonLabel.Text/AutoStopIcon.Glyph. -->
                     <Button
                         x:Name="AutoStopButton"
                         HorizontalAlignment="Stretch"
@@ -669,149 +1039,675 @@
                 </StackPanel>
             </Border>
 
-            <!-- Centered, modal configuration dialog for the "Automatically stop" feature. Declared
-                 here as a plain named element (not a resource) - like any ContentDialog, it renders
-                 nothing inline in the page layout and only appears in its own popup layer when
-                 ShowAsync() is called from AutoStopButton_Click, so its position in the visual tree
-                 doesn't affect the cards around it. The two RadioButtons (shared GroupName, so checking
-                 one automatically unchecks the other) pick exactly one Auto Stop mode; each RadioButton's
-                 Checked handler in code-behind enables its own nested control(s) and disables the other
-                 option's. AutoStopCountBox/StopDatePicker/StopTimePicker all stage their edits into
-                 local fields instead of committing directly to _autoStopCount/_stopDateTime - only
-                 PrimaryButtonClick (OK) commits the staged values; Cancel/Escape/dismissal leaves them
-                 untouched. Uses the default ContentDialog appearance (no custom Background). -->
+            <!-- Centered, modal configuration dialog for the "Automatically stop" feature - like any
+                 ContentDialog, renders nothing inline and only appears in its own popup layer when
+                 ShowAsync() is called from AutoStopButton_Click.
+
+                 Mode selection is a single flat toolkit:Segmented/toolkit:SegmentedItem control, the
+                 same one ModeSegmentedControl above uses for Auto click/Jiggle. AutoStopSegmentedControl
+                 holds three items as one row - Date & time, Duration, Action count. "Date & time" covers
+                 both a one-shot date+time and a recurring time-only stop: AutoStopPickDateToggle inside
+                 AutoStopDateTimeContainer below (default Off) disambiguates AutoStopMode.DateTime (On)
+                 from AutoStopMode.Time (Off). See AutoStopModeToSegmentIndex/SegmentIndexToAutoStopMode
+                 for the mapping, and UpdateAutoStopModeContainerVisibility for how the index decides
+                 which of the three field containers below is visible (only ever one at a time).
+
+                 Every container's controls stage their edits into local fields - only PrimaryButtonClick
+                 (OK) commits the staged values; Cancel/Escape/dismissal leaves them untouched.
+
+                 MinHeight="188" (pinning this dialog to its tallest state, "Date & time" mode) is set on
+                 the StackPanel below rather than the ContentDialog element itself, since that broke
+                 MainContentGrid's own layout. Re-measure and re-derive this value whenever a mode's
+                 content changes again.
+
+                 MinWidth="308"/MaxWidth="308" pin this StackPanel to a single fixed width across every
+                 mode and edit state: entering preset edit mode moves the Confirm/Cancel/Reset group onto
+                 the same row as Edit/the presets, growing that row's Column 0 - pinning both floor and
+                 ceiling keeps that growth from resizing the dialog, since Column 1's "*" preset column
+                 absorbs whatever space remains. Long preset labels clip/overflow instead of wrapping - an
+                 accepted tradeoff of the fixed width. -->
             <ContentDialog
                 x:Name="AutoStopDialog"
                 Title="Auto stop"
                 PrimaryButtonText="OK"
                 CloseButtonText="Cancel"
-                DefaultButton="Primary">
-                <StackPanel Spacing="16">
-                    <StackPanel Spacing="12">
-                        <RadioButton
-                            x:Name="AutoStopByCountRadioButton"
-                            GroupName="AutoStopMode"
-                            Content="After a number of clicks/jiggles"
-                            Checked="AutoStopByCountRadioButton_Checked"
-                            AutomationProperties.AutomationId="AutoStopByCountRadioButton" />
-                        <!-- Header ("clicks"/"jiggles") is set dynamically in code-behind
-                             (UpdateAutoStopCountBoxHeader) to match whichever Auto Click/Jiggle Mode is
-                             currently selected on the main window. Minimum="1", Maximum=99999999 (set in
-                             the constructor, not as a XAML attribute here - see MainWindow()'s own
-                             comment on this, same XBF float32 precision issue MinutesBox.Maximum has),
-                             and a MaxLength of 8 (matching 99999999's own digit count) on this box's inner
-                             InputBox, set alongside its digits-only character filter in
-                             InitializeAdvancedIntervalLiveSync's own call to
-                             SetInputBoxMaxLength(AutoStopCountBox, ...) - see that method and
-                             HookIntervalCharacterFilter's doc comments. NumberBox does NOT actually
-                             auto-clamp typed/committed text to Minimum/Maximum on its own (confirmed
-                             empirically elsewhere in this file, e.g. IntervalBox_ValueChanged's own doc
-                             comment) - AutoStopCountBox_ValueChanged clamps explicitly instead. The
-                             FractionDigits=0 NumberFormatter only affects how a committed value is
-                             displayed, not what can be typed - decimals are unreachable anyway now that
-                             the character filter blocks '.'/',' outright. -->
-                        <NumberBox
-                            x:Name="AutoStopCountBox"
-                            Margin="0,0,0,0"
+                DefaultButton="Primary"
+                PrimaryButtonClick="AutoStopDialog_PrimaryButtonClick"
+                Closing="AutoStopDialog_Closing">
+                <!-- MinWidth/MinHeight live here, on Content, rather than on the ContentDialog element
+                     above: ContentDialog is still an ordinary Visibility="Visible" FrameworkElement
+                     sitting inline in MainContentGrid's visual tree the instant this page loads (with no
+                     Grid.Row of its own, defaulting to Grid.Row="0", the same row as
+                     ModeSegmentedControl), so a MinWidth/MinHeight set directly on it gets folded into
+                     that row's own Auto measurement regardless of whether the dialog is ever shown -
+                     inflating Row 0 and starving the window's other Auto rows. Setting both constraints
+                     on Content instead, which only ever renders inside the dialog's own Popup layer,
+                     keeps the floors working without feeding a bogus size back into MainContentGrid. -->
+                <StackPanel Spacing="16" MinWidth="308" MaxWidth="308" MinHeight="188">
+                    <!-- Single flat mode switch, three items as one row (Date & time, Duration, Action
+                         count - matching AutoStopModeToSegmentIndex/SegmentIndexToAutoStopMode; "Date &
+                         time" covers both AutoStopMode.DateTime and AutoStopMode.Time, disambiguated
+                         inside AutoStopDateTimeContainer by AutoStopPickDateToggle rather than a fourth
+                         item). No XAML-declared SelectedIndex - AutoStopButton_Click always sets it
+                         unconditionally every time the dialog opens, so there's never a moment this
+                         dialog is visible with it unset. Text-only items (no icon - a per-item
+                         FontIcon+TextBlock pair read as wider than the labels alone needed).
+                         HorizontalAlignment="Stretch" plus the ItemsPanel override below (a Grid with
+                         three equal "*" columns, one explicit Grid.Column per SegmentedItem) makes all
+                         three items equal-width and fill the dialog's content width - Segmented's default
+                         ItemsPanel only ever sizes each item to its own content and never distributes
+                         extra space. -->
+                    <toolkit:Segmented
+                        x:Name="AutoStopSegmentedControl"
+                        HorizontalAlignment="Stretch"
+                        CornerRadius="6"
+                        Loaded="AutoStopSegmentedControl_Loaded"
+                        SelectionChanged="AutoStopSegmentedControl_SelectionChanged"
+                        AutomationProperties.AutomationId="AutoStopSegmentedControl">
+                        <toolkit:Segmented.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                </Grid>
+                            </ItemsPanelTemplate>
+                        </toolkit:Segmented.ItemsPanel>
+                        <toolkit:SegmentedItem
+                            Grid.Column="0"
+                            Height="38"
+                            Padding="0"
                             HorizontalAlignment="Stretch"
-                            Minimum="1"
-                            SmallChange="1"
-                            LargeChange="10"
-                            SpinButtonPlacementMode="Compact"
-                            ValueChanged="AutoStopCountBox_ValueChanged"
-                            AutomationProperties.AutomationId="AutoStopCountBox">
-                            <NumberBox.NumberFormatter>
-                                <numformatting:DecimalFormatter FractionDigits="0" />
-                            </NumberBox.NumberFormatter>
-                        </NumberBox>
+                            HorizontalContentAlignment="Center"
+                            CornerRadius="6"
+                            AutomationProperties.Name="Date &amp; time"
+                            AutomationProperties.AutomationId="AutoStopDateTimeSegmentedItem">
+                            <TextBlock FontSize="14" Text="Date &amp; time" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </toolkit:SegmentedItem>
+                        <toolkit:SegmentedItem
+                            Grid.Column="1"
+                            Height="38"
+                            Padding="0"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center"
+                            CornerRadius="6"
+                            AutomationProperties.Name="Duration"
+                            AutomationProperties.AutomationId="AutoStopDurationSegmentedItem">
+                            <TextBlock FontSize="14" Text="Duration" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </toolkit:SegmentedItem>
+                        <toolkit:SegmentedItem
+                            x:Name="AutoStopCountSegmentedItem"
+                            Grid.Column="2"
+                            Height="38"
+                            Padding="0"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center"
+                            CornerRadius="6"
+                            AutomationProperties.Name="Action count"
+                            AutomationProperties.AutomationId="AutoStopCountSegmentedItem"
+                            ToolTipService.ToolTip="Clicks or Jiggles">
+                            <TextBlock x:Name="AutoStopCountSegmentedItemText" FontSize="14" Text="Action count" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </toolkit:SegmentedItem>
+                    </toolkit:Segmented>
+
+                    <!-- Single-cell Grid wrapping all three tab containers below so they overlap in
+                         place instead of stacking vertically like plain StackPanel siblings would -
+                         AutoStopSegmentedControl_SelectionChanged's animated switch (AnimatePanelTransition)
+                         needs the outgoing/incoming pair to occupy the same rectangle while both are
+                         briefly Visible mid-slide. Only ever sized to whichever container(s) are
+                         currently Visible (Collapsed ones contribute no size), so this adds no height
+                         beyond what the tallest tab already needed. -->
+                    <Grid x:Name="AutoStopTabContentGrid">
+                    <!-- AutoStopMode.Count container - selected via AutoStopSegmentedControl's third item.
+                         Visible by default so the dialog isn't blank before AutoStopButton_Click first
+                         runs UpdateAutoStopModeContainerVisibility, which then keeps it in sync with
+                         whichever container matches the current SelectedIndex. -->
+                    <StackPanel x:Name="AutoStopCountContainer" Spacing="12"
+                                LosingFocus="AutoStopCountContainer_LosingFocus">
+                        <!-- Small, dimmed explanatory caption above AutoStopCountBox. CaptionTextBlockStyle
+                             + TextFillColorSecondaryBrush is this app's convention for secondary/
+                             explanatory text (see AboutVersionText in Controls/SettingsPanel.xaml).
+                             TextWrapping="Wrap" is a safety net if a future MinWidth ever shrinks. -->
+                        <TextBlock
+                            x:Name="AutoStopCountDescription"
+                            Style="{StaticResource CaptionTextBlockStyle}"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap"
+                            Text="Stops automation once this count is reached." />
+
+                        <!-- Single shared NumberBox, used regardless of whether Auto Click or Jiggle mode
+                             is active. Caption is a plain TextBlock to the box's right (inside this
+                             horizontal StackPanel) rather than the NumberBox's own Header, freed up once
+                             the box was narrowed to a fixed Width="85". Its Text (and
+                             AutomationProperties.Name below) is set dynamically from AutoStopButton_Click
+                             when the dialog opens, to "Clicks" or "Jiggles" matching CurrentSelectedMode -
+                             not live-synced afterward, since the dialog is modal.
+                             Minimum="1", Maximum=99999999 are set in the constructor, not as XAML
+                             attributes (same XBF float32 precision issue as MinutesBox.Maximum), and a
+                             MaxLength of 8 plus a digits-only character filter are set via
+                             SetInputBoxMaxLength(AutoStopCountBox, ...) in the constructor (rejectLeadingZero
+                             stops a typed "0" from ever committing). SpinButtonPlacementMode="Hidden" and
+                             a suppressed clear "X" button (SuppressClearButton) match the four Advanced
+                             interval fields' treatment. -->
+
+                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <NumberBox
+                                x:Name="AutoStopCountBox"
+                                Width="85"
+                                Minimum="1"
+                                SmallChange="1"
+                                LargeChange="10"
+                                SpinButtonPlacementMode="Hidden"
+                                ValidationMode="Disabled"
+                                ValueChanged="AutoStopCountBox_ValueChanged"
+                                PreviewKeyDown="AutoStopPresetField_KeyDown"
+                                AutomationProperties.Name="clicks/jiggles"
+                                AutomationProperties.AutomationId="AutoStopCountBox">
+                                <NumberBox.NumberFormatter>
+                                    <numformatting:DecimalFormatter FractionDigits="0" />
+                                </NumberBox.NumberFormatter>
+                            </NumberBox>
+                            <TextBlock x:Name="AutoStopCountCaptionText" FontSize="12" Text="clicks/jiggles" VerticalAlignment="Center" ToolTipService.ToolTip="Clicks or Jiggles" />
+                        </StackPanel>
+
+                        <!-- Quick preset row - one click sets AutoStopCountBox.Value straight to a common
+                             count, unless Action count preset editing is active
+                             (_editingCountPresetIndex non-null, toggled by AutoStopCountEditButton), in
+                             which case clicking a preset instead selects it for in-place editing - see
+                             AutoStopCountPresetButton_Click. All three presets are ToggleButtons even
+                             outside edit mode so entering edit mode can radio-select among them without
+                             swapping control types; AutoStopCountPresetButton_Click self-unchecks them
+                             immediately while edit mode is off, so they never look persistently "pressed".
+                             Content is set entirely from code-behind, not a XAML literal, since values
+                             are user-editable (see AppConfig.AutoStopCountPresets).
+
+                             An outer Grid (AutoStopCountPresetRow) with two columns - "*" holding the
+                             actual 3-preset Grid (AutoStopCountPresetGrid), "Auto" holding Edit - keeps
+                             Edit's column from influencing how the 3 preset columns divide their space,
+                             so AutoStopCountPresetGrid stays a plain 3-column Grid structurally identical
+                             to the Hours/Minutes/Seconds Grid below (both ColumnSpacing="6" across exactly
+                             3 columns), keeping their equal-thirds rounding and alignment in sync.
+                             Each ToggleButton has explicit HorizontalAlignment="Stretch", since
+                             ToggleButton's control template doesn't stretch its content by default.
+                             HorizontalContentAlignment="Center" keeps the label centered in the wider
+                             button. FontSize="12"/Padding="10,4" match AdvancedIntervalRow's convention
+                             for compact controls in a tight space.
+                             Height="26" on every preset button matches Edit/Confirm/Cancel/Reset's
+                             rendered height below, since Segoe Fluent Icons' glyph metrics don't
+                             auto-size to the same line height as text at the same nominal FontSize.
+                             No width cap on this row - an edited preset's label can grow the dialog
+                             wider, same as any other row. -->
+
+                        <Grid x:Name="AutoStopCountPresetRow">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <!-- Edit - the outer Grid's leading column, deliberately separate from
+                                 AutoStopCountPresetGrid below - stays Auto-width/icon-sized always, on
+                                 the same row as the presets. A plain one-shot Button, not a ToggleButton:
+                                 Edit and Confirm are two entirely separate controls, this one only ever
+                                 means "start editing" and is hidden once editing begins (Visibility
+                                 toggled by SetPresetEditButtonsVisibility, opposite of Confirm/Cancel/Reset
+                                 below), while AutoStopCountConfirmEditButton is what appears once editing
+                                 starts. Margin="0,0,6,0" matches the same 6px gap
+                                 AutoStopCountPresetGrid's ColumnSpacing="6" provides between presets. -->
+                            <Button
+                                x:Name="AutoStopCountEditButton"
+                                Grid.Column="0"
+                                Padding="6,4"
+                                Height="26"
+                                Margin="0,0,6,0"
+                                Click="AutoStopCountEditButton_Click"
+                                AutomationProperties.Name="Edit action count presets"
+                                AutomationProperties.AutomationId="AutoStopCountEditButton"
+                                ToolTipService.ToolTip="Edit presets">
+                                <FontIcon Glyph="&#xE70F;" FontSize="12" />
+                            </Button>
+                            <Grid x:Name="AutoStopCountPresetGrid" Grid.Column="1" ColumnSpacing="6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <ToggleButton
+                                    x:Name="AutoStopCountPreset1Button"
+                                    Grid.Column="0"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Center"
+                                    FontSize="12"
+                                    Padding="10,4"
+                                    Height="26"
+                                    Click="AutoStopCountPresetButton_Click"
+                                    AutomationProperties.Name="Action count preset 1"
+                                    AutomationProperties.AutomationId="AutoStopCountPreset1Button" />
+                                <ToggleButton
+                                    x:Name="AutoStopCountPreset2Button"
+                                    Grid.Column="1"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Center"
+                                    FontSize="12"
+                                    Padding="10,4"
+                                    Height="26"
+                                    Click="AutoStopCountPresetButton_Click"
+                                    AutomationProperties.Name="Action count preset 2"
+                                    AutomationProperties.AutomationId="AutoStopCountPreset2Button" />
+                                <ToggleButton
+                                    x:Name="AutoStopCountPreset3Button"
+                                    Grid.Column="2"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Center"
+                                    FontSize="12"
+                                    Padding="10,4"
+                                    Height="26"
+                                    Click="AutoStopCountPresetButton_Click"
+                                    AutomationProperties.Name="Action count preset 3"
+                                    AutomationProperties.AutomationId="AutoStopCountPreset3Button" />
+                            </Grid>
+                            <!-- Confirm, Cancel, Reset - a sibling StackPanel in this same outer Grid's
+                                 Column 0, alongside AutoStopCountEditButton above - mutually exclusive via
+                                 SetPresetEditButtonsVisibility's Collapsed/Visible toggle, so only one
+                                 ever occupies the cell at a time. Margin="0,0,6,0" matches
+                                 AutoStopCountEditButton's own trailing gap into the presets in Column 1.
+                                 Confirm is a plain one-shot Button, always accent-colored
+                                 (Background/Foreground via ThemeResource directly, since its appearance
+                                 never changes across states). Accept checkmark glyph, U+E8FB.
+                                 Cancel is a one-shot plain Button reusing AbandonCountPresetEditIfActive
+                                 verbatim. CancelMedium glyph, U+F78A. -->
+                            <StackPanel
+                                Grid.Column="0"
+                                Orientation="Horizontal"
+                                Spacing="4"
+                                Margin="0,0,6,0">
+                                <Button
+                                    x:Name="AutoStopCountConfirmEditButton"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    Padding="6,4"
+                                    Height="26"
+                                    Visibility="Collapsed"
+                                    Click="AutoStopCountConfirmEditButton_Click"
+                                    AutomationProperties.Name="Save action count presets"
+                                    AutomationProperties.AutomationId="AutoStopCountConfirmEditButton"
+                                    ToolTipService.ToolTip="Save presets">
+                                    <FontIcon Glyph="&#xE8FB;" FontSize="12" />
+                                </Button>
+                                <Button
+                                    x:Name="AutoStopCountCancelEditButton"
+                                    Padding="6,4"
+                                    Height="26"
+                                    Visibility="Collapsed"
+                                    Click="AutoStopCountCancelEditButton_Click"
+                                    AutomationProperties.Name="Cancel action count preset edit"
+                                    AutomationProperties.AutomationId="AutoStopCountCancelEditButton"
+                                    ToolTipService.ToolTip="Cancel">
+                                    <FontIcon Glyph="&#xF78A;" FontSize="12" />
+                                </Button>
+                                <!-- Reset - third one-shot Button in this group, same visibility lifecycle
+                                     as Confirm/Cancel above. Resets all three staged preset slots to
+                                     AppConfig.AutoStopCountPresets' default in one click without exiting
+                                     edit mode - Confirm still has to be clicked to persist it.
+                                     UpdateRestore glyph, U+E777. -->
+                                <Button
+                                    x:Name="AutoStopCountResetPresetsButton"
+                                    Padding="6,4"
+                                    Height="26"
+                                    Visibility="Collapsed"
+                                    Click="AutoStopCountResetPresetsButton_Click"
+                                    AutomationProperties.Name="Reset action count presets to default"
+                                    AutomationProperties.AutomationId="AutoStopCountResetPresetsButton"
+                                    ToolTipService.ToolTip="Reset to default">
+                                    <FontIcon Glyph="&#xE777;" FontSize="12" />
+                                </Button>
+                            </StackPanel>
+                        </Grid>
                     </StackPanel>
-                    <StackPanel Spacing="12">
-                        <RadioButton
-                            x:Name="AutoStopByDateTimeRadioButton"
-                            GroupName="AutoStopMode"
-                            Content="At a specific date &amp; time"
-                            Checked="AutoStopByDateTimeRadioButton_Checked"
-                            AutomationProperties.AutomationId="AutoStopByDateTimeRadioButton" />
-                        <StackPanel Margin="0,0,0,0" Spacing="12">
-                            <!-- Single 24-hour TimePicker (ClockIdentifier="24HourClock") replaces the
-                                 previous separate Hour/Minute NumberBox pair - one control produces the
-                                 complete HH:mm value directly as a TimeSpan (TimePicker.Time), so
-                                 StopTimePicker_TimeChanged in code-behind no longer needs the old
-                                 NaN-partial-state guard two independent NumberBoxes required. -->
-                            <TimePicker
-                                x:Name="StopTimePicker"
-                                HorizontalAlignment="Stretch"
-                                ClockIdentifier="24HourClock"
-                                TimeChanged="StopTimePicker_TimeChanged"
-                                AutomationProperties.AutomationId="StopTimePicker" />
-                            <DatePicker
-                                x:Name="StopDatePicker"
-                                HorizontalAlignment="Stretch"
-                                DateChanged="StopDatePicker_DateChanged"
-                                AutomationProperties.AutomationId="StopDatePicker" />
+
+                    <!-- AutoStopMode.DateTime / AutoStopMode.Time container - selected via
+                         AutoStopSegmentedControl's first item. Collapsed by default (Count's container
+                         alone starts Visible). This one tab covers both a recurring time-only stop and a
+                         specific one-shot date+time - AutoStopPickDateToggle below disambiguates: Off is
+                         the recurring stop (no date, no past-time validation), On is the one-shot date+time
+                         (rejects OK if already passed). Both share the same StopTimePicker for their time
+                         value; only StopDatePicker's IsEnabled (bound to the toggle, not
+                         hidden/collapsed, so the layout doesn't jump) actually differs. -->
+                    <StackPanel x:Name="AutoStopDateTimeContainer" Spacing="12" Visibility="Collapsed">
+                        <!-- Small, dimmed explanatory caption above StopTimePicker/StopDatePicker/
+                             AutoStopPickDateToggle - same CaptionTextBlockStyle +
+                             TextFillColorSecondaryBrush convention as AutoStopDurationDescription/
+                             AutoStopCountContainer's own caption. Shares this slot with
+                             AutoStopDateTimePastWarning below: Collapsed whenever that warning is shown
+                             (AutoStopDialog_PrimaryButtonClick), restored to Visible everywhere it's
+                             cleared instead. No XAML-declared Text - toggle-driven, swapped between
+                             "Stops automation at the selected date & time." (toggle On) and "Stops
+                             automation at the selected time." (Off) by
+                             UpdateAutoStopModeContainerVisibility. -->
+                        <TextBlock
+                            x:Name="AutoStopDateTimeDescription"
+                            Style="{StaticResource CaptionTextBlockStyle}"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                        <!-- Shares AutoStopDateTimeDescription's slot in place - see that caption's own
+                             comment for the toggling rationale, and AutoStopDialog_PrimaryButtonClick for
+                             exactly when this shows. No Margin of its own - this slot is already reserved
+                             by AutoStopDateTimeDescription/this container's Spacing="12", so swapping
+                             between the two never changes the dialog's rendered height. -->
+                        <TextBlock
+                            x:Name="AutoStopDateTimePastWarning"
+                            Style="{StaticResource CaptionTextBlockStyle}"
+                            Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                            FontWeight="SemiBold"
+                            TextWrapping="Wrap"
+                            Visibility="Collapsed"
+                            Text="Date/time has already passed." />
+
+                        <!-- Single 24-hour TimePicker (ClockIdentifier="24HourClock") - one control
+                             produces the complete HH:mm value directly as a TimeSpan (TimePicker.Time), so
+                             StopTimePicker_TimeChanged needs no NaN-partial-state guard the way two
+                             independent NumberBoxes would. Shared by both AutoStopPickDateToggle states -
+                             feeds _stopDateTime (combined with StopDatePicker's date) when On, and
+                             _timeStopTime directly when Off (see AutoStopButton_Click's commit block). -->
+                        <TimePicker
+                            x:Name="StopTimePicker"
+                            HorizontalAlignment="Stretch"
+                            ClockIdentifier="24HourClock"
+                            TimeChanged="StopTimePicker_TimeChanged"
+                            AutomationProperties.AutomationId="StopTimePicker" />
+                        <!-- IsEnabled (not Visibility) follows AutoStopPickDateToggle below - grayed out
+                             rather than hidden while Off, so the container's height stays constant as the
+                             toggle flips. While Off, this is a live preview of the recurring stop's next
+                             occurrence, recomputed on every relevant edit and when the toggle switches
+                             Off - not on a running timer. While On, this is the user's own explicit,
+                             authoritative date choice, never recomputed out from under them. -->
+                        <DatePicker
+                            x:Name="StopDatePicker"
+                            HorizontalAlignment="Stretch"
+                            IsEnabled="False"
+                            DateChanged="StopDatePicker_DateChanged"
+                            AutomationProperties.AutomationId="StopDatePicker" />
+
+                        <!-- Off by default - enables/disables StopDatePicker above via
+                             UpdateAutoStopModeContainerVisibility, and drives AutoStopDateTimeDescription's
+                             text. Placed last, after both pickers.
+                             A compact ToggleSwitch + label TextBlock side by side, rather than
+                             ToggleSwitch's own Header property, since Header's default spacing read as
+                             too loose here. The switch keeps the same OnContent=""/OffContent="" plus
+                             fixed Width="44"/MinWidth="0"/Padding="0" styling AutoStopToggle uses outside
+                             this dialog. AutomationProperties.Name carries "Pick date" on the switch
+                             itself since the label TextBlock is a separate element as far as UI
+                             Automation is concerned. Margin="0,-12,0,-8" trims ToggleSwitch's built-in
+                             top/bottom padding so this row sits closer to StopDatePicker above it. -->
+                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,-12,0,-8">
+                            <ToggleSwitch
+                                x:Name="AutoStopPickDateToggle"
+                                OnContent=""
+                                OffContent=""
+                                MinWidth="0"
+                                Width="44"
+                                Padding="0"
+                                VerticalAlignment="Center"
+                                Toggled="AutoStopPickDateToggle_Toggled"
+                                AutomationProperties.AutomationId="AutoStopPickDateToggle"
+                                AutomationProperties.Name="Pick date" />
+                            <TextBlock
+                                Text="Pick date"
+                                VerticalAlignment="Center" />
                         </StackPanel>
                     </StackPanel>
+
+                    <!-- AutoStopMode.Duration ("After a period of time") container - selected via
+                         AutoStopSegmentedControl's second item. Collapsed by default. Three NumberBoxes
+                         at the app's regular size, matching AdvancedIntervalRow's live typing behavior
+                         (digits-only filtering and never-blank coercion apply on every keystroke, clear
+                         "X" suppressed) via HookAutoStopDurationBoxLiveSync - not
+                         HookAdvancedIntervalBoxLiveSync, since that method's TextChanged handler does
+                         Advanced-interval-specific cross-field conversion that would be wrong here.
+                         Maximum="999999" on Hours is a plain XAML literal (unlike MinutesBox.Maximum
+                         elsewhere) since 999999 is well under 2^24, so no XBF float32 workaround is
+                         needed. Minutes/Seconds are capped at 59. Each box's ValueChanged handler
+                         (AutoStopDurationBox_ValueChanged, shared across all three) clamps/truncates on
+                         commit and stages the result. Hours going well past 24 is a deliberately
+                         supported, unbounded duration - everywhere that reads it back out uses
+                         TotalHours rather than TimeSpan.Hours, so it doesn't roll over into Days and get
+                         silently truncated to a 0-23 remainder. -->
+                    <StackPanel x:Name="AutoStopDurationContainer" Spacing="12" Visibility="Collapsed"
+                                LosingFocus="AutoStopDurationContainer_LosingFocus">
+                        <!-- Small, dimmed explanatory caption above the Hours/Minutes/Seconds row - same
+                             CaptionTextBlockStyle + TextFillColorSecondaryBrush convention as
+                             AutoStopCountContainer's own caption. Shares this slot with two different
+                             warnings below - Collapsed whenever either is shown, restored to Visible
+                             wherever either is cleared; the two warnings are mutually exclusive with
+                             each other too:
+                               - AutoStopDurationZeroWarning is about the real configured Duration value,
+                                 checked only on an actual OK click (AutoStopDialog_PrimaryButtonClick).
+                               - AutoStopDurationPresetZeroWarning is a separate check (see
+                                 SaveDurationPresetEdits) for whichever preset slot is being edited. -->
+                        <TextBlock
+                            x:Name="AutoStopDurationDescription"
+                            Style="{StaticResource CaptionTextBlockStyle}"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap"
+                            Text="Stops automation after this much time has elapsed." />
+                        <!-- Shares AutoStopDurationDescription's slot in place. The only place this is
+                             shown is AutoStopDialog_PrimaryButtonClick, which - since this can fire while
+                             a preset is still mid-edit (OK is reachable by mouse even though
+                             DefaultButton is forced to None mid-edit) - also explicitly Collapses
+                             AutoStopDurationPresetZeroWarning, so the two can never visibly stack. -->
+                        <TextBlock
+                            x:Name="AutoStopDurationZeroWarning"
+                            Style="{StaticResource CaptionTextBlockStyle}"
+                            Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                            FontWeight="SemiBold"
+                            TextWrapping="Wrap"
+                            Visibility="Collapsed"
+                            Text="Enter a duration greater than 0." />
+                        <TextBlock
+                            x:Name="AutoStopDurationPresetZeroWarning"
+                            Style="{StaticResource CaptionTextBlockStyle}"
+                            Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                            FontWeight="SemiBold"
+                            TextWrapping="Wrap"
+                            Visibility="Collapsed"
+                            Text="Enter a duration greater than 0." />
+
+                        <Grid ColumnSpacing="6">
+                            <!-- These three NumberBoxes render at the app's regular size. FontSize="12" on
+                                 each box only affects the Hours/Minutes/Seconds Header caption (an
+                                 inherited property leak onto the typed digits too, counteracted by
+                                 HookAutoStopDurationBoxLiveSync's inputBox.FontSize = 14 restore). -->
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <NumberBox
+                                x:Name="AutoStopDurationHoursBox"
+                                Grid.Column="0"
+                                Header="Hours"
+                                FontSize="12"
+                                HorizontalAlignment="Stretch"
+                                Minimum="0"
+                                Maximum="999999"
+                                SpinButtonPlacementMode="Hidden"
+                                ValueChanged="AutoStopDurationBox_ValueChanged"
+                                PreviewKeyDown="AutoStopPresetField_KeyDown"
+                                AutomationProperties.AutomationId="AutoStopDurationHoursBox" />
+                            <NumberBox
+                                x:Name="AutoStopDurationMinutesBox"
+                                Grid.Column="1"
+                                Header="Minutes"
+                                FontSize="12"
+                                HorizontalAlignment="Stretch"
+                                Minimum="0"
+                                Maximum="59"
+                                SpinButtonPlacementMode="Hidden"
+                                ValueChanged="AutoStopDurationBox_ValueChanged"
+                                PreviewKeyDown="AutoStopPresetField_KeyDown"
+                                AutomationProperties.AutomationId="AutoStopDurationMinutesBox" />
+                            <NumberBox
+                                x:Name="AutoStopDurationSecondsBox"
+                                Grid.Column="2"
+                                Header="Seconds"
+                                FontSize="12"
+                                HorizontalAlignment="Stretch"
+                                Minimum="0"
+                                Maximum="59"
+                                SpinButtonPlacementMode="Hidden"
+                                ValueChanged="AutoStopDurationBox_ValueChanged"
+                                PreviewKeyDown="AutoStopPresetField_KeyDown"
+                                AutomationProperties.AutomationId="AutoStopDurationSecondsBox" />
+                        </Grid>
+
+                        <!-- Quick preset row, same pattern as AutoStopCountContainer's own preset row
+                             above. AutoStopDurationPresetButton_Click reads each preset's stored
+                             Hours/Minutes/Seconds trio directly and writes all three duration fields at
+                             once, fully replacing whatever they previously held. Content is set entirely
+                             from code-behind (RefreshDurationPresetLabels/
+                             AutoStopDurationBox_ValueChanged's edit-mode branch via
+                             FormatAutoStopDuration), not a XAML literal. Same outer/inner Grid split as
+                             AutoStopCountContainer (AutoStopCountPresetRow/AutoStopCountPresetGrid), for
+                             the same reason. -->
+                        <Grid x:Name="AutoStopDurationPresetRow">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <!-- Edit - same rationale/wiring as AutoStopCountContainer's own outer Grid's
+                                 1st column above. -->
+                            <Button
+                                x:Name="AutoStopDurationEditButton"
+                                Grid.Column="0"
+                                Padding="6,4"
+                                Height="26"
+                                Margin="0,0,6,0"
+                                Click="AutoStopDurationEditButton_Click"
+                                AutomationProperties.Name="Edit duration presets"
+                                AutomationProperties.AutomationId="AutoStopDurationEditButton"
+                                ToolTipService.ToolTip="Edit presets">
+                                <FontIcon Glyph="&#xE70F;" FontSize="12" />
+                            </Button>
+                            <Grid x:Name="AutoStopDurationPresetGrid" Grid.Column="1" ColumnSpacing="6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <ToggleButton
+                                    x:Name="AutoStopDurationPreset1Button"
+                                    Grid.Column="0"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Center"
+                                    FontSize="12"
+                                    Padding="10,4"
+                                    Height="26"
+                                    Click="AutoStopDurationPresetButton_Click"
+                                    AutomationProperties.Name="Duration preset 1"
+                                    AutomationProperties.AutomationId="AutoStopDurationPreset1Button" />
+                                <ToggleButton
+                                    x:Name="AutoStopDurationPreset2Button"
+                                    Grid.Column="1"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Center"
+                                    FontSize="12"
+                                    Padding="10,4"
+                                    Height="26"
+                                    Click="AutoStopDurationPresetButton_Click"
+                                    AutomationProperties.Name="Duration preset 2"
+                                    AutomationProperties.AutomationId="AutoStopDurationPreset2Button" />
+                                <ToggleButton
+                                    x:Name="AutoStopDurationPreset3Button"
+                                    Grid.Column="2"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Center"
+                                    FontSize="12"
+                                    Padding="10,4"
+                                    Height="26"
+                                    Click="AutoStopDurationPresetButton_Click"
+                                    AutomationProperties.Name="Duration preset 3"
+                                    AutomationProperties.AutomationId="AutoStopDurationPreset3Button" />
+                            </Grid>
+                            <!-- Confirm, Cancel, Reset - a sibling StackPanel in this same outer Grid's
+                                 Column 0, same rationale/wiring as AutoStopCountContainer's own Column 0
+                                 group above. Reuses AbandonDurationPresetEditIfActive verbatim via
+                                 AutoStopDurationCancelEditButton_Click. -->
+                            <StackPanel
+                                Grid.Column="0"
+                                Orientation="Horizontal"
+                                Spacing="4"
+                                Margin="0,0,6,0">
+                                <Button
+                                    x:Name="AutoStopDurationConfirmEditButton"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    Padding="6,4"
+                                    Height="26"
+                                    Visibility="Collapsed"
+                                    Click="AutoStopDurationConfirmEditButton_Click"
+                                    AutomationProperties.Name="Save duration presets"
+                                    AutomationProperties.AutomationId="AutoStopDurationConfirmEditButton"
+                                    ToolTipService.ToolTip="Save presets">
+                                    <FontIcon Glyph="&#xE8FB;" FontSize="12" />
+                                </Button>
+                                <Button
+                                    x:Name="AutoStopDurationCancelEditButton"
+                                    Padding="6,4"
+                                    Height="26"
+                                    Visibility="Collapsed"
+                                    Click="AutoStopDurationCancelEditButton_Click"
+                                    AutomationProperties.Name="Cancel duration preset edit"
+                                    AutomationProperties.AutomationId="AutoStopDurationCancelEditButton"
+                                    ToolTipService.ToolTip="Cancel">
+                                    <FontIcon Glyph="&#xF78A;" FontSize="12" />
+                                </Button>
+                                <!-- Reset - same rationale/wiring as AutoStopCountResetPresetsButton above;
+                                     reuses AutoStopDurationResetPresetsButton_Click. UpdateRestore glyph,
+                                     U+E777. -->
+                                <Button
+                                    x:Name="AutoStopDurationResetPresetsButton"
+                                    Padding="6,4"
+                                    Height="26"
+                                    Visibility="Collapsed"
+                                    Click="AutoStopDurationResetPresetsButton_Click"
+                                    AutomationProperties.Name="Reset duration presets to default"
+                                    AutomationProperties.AutomationId="AutoStopDurationResetPresetsButton"
+                                    ToolTipService.ToolTip="Reset to default">
+                                    <FontIcon Glyph="&#xE777;" FontSize="12" />
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                    </Grid>
                 </StackPanel>
             </ContentDialog>
 
             <!-- Hidden elements that exist purely so code-behind can read a correctly theme-resolved
                  brush (respecting RootGrid's RequestedTheme override) without hard-coding colors. Used by
-                 UpdateRandomizeIntervalIndicator, and by GetAlternateButtonForeground/
-                 GetAlternateButtonBackground for PowerToggleAlternateButton's Paused (accent) and
-                 Starting (green) states alike (see those methods' shared "colorway" comment) -
-                 IntervalCaptionTextBlock/HotkeyCaptionTextBlock/StatusTextBlock get their theme-correct
-                 colors declaratively via DimmableLabel/StatusLabel's own VisualStates instead (see their
-                 Styles above). -->
+                 GetAlternateButtonForeground/GetAlternateButtonBackground for PowerToggleAlternateButton's
+                 Paused (accent) and Starting (green) states alike. IntervalCaptionTextBlock/
+                 HotkeyCaptionTextBlock/StatusTextBlock get their theme-correct colors declaratively via
+                 DimmableLabel/StatusLabel's own VisualStates instead (see their Styles above). -->
             <TextBlock x:Name="AccentBrushSource" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" Visibility="Collapsed" />
             <!-- AccentFillBrushSource: AccentFillColorDefaultBrush - the Fill-purposed sibling of
-                 AccentTextFillColorPrimaryBrush above, tuned for the accent color used as a background/fill
-                 rather than as text - used by GetAlternateButtonBackground for
-                 PowerToggleAlternateButton's Paused-state Dark-theme background specifically (Light theme
-                 uses the plain, raw accent color instead - see its own doc comment for why). -->
+                 AccentTextFillColorPrimaryBrush above, tuned for the accent color used as a
+                 background/fill rather than as text - used by GetAlternateButtonBackground for
+                 PowerToggleAlternateButton's Paused-state Dark-theme background (Light theme uses the
+                 plain, raw accent color instead). -->
             <TextBlock x:Name="AccentFillBrushSource" Foreground="{ThemeResource AccentFillColorDefaultBrush}" Visibility="Collapsed" />
-            <TextBlock x:Name="DisabledBrushSource" Foreground="{ThemeResource TextFillColorDisabledBrush}" Visibility="Collapsed" />
-            <!-- SuccessBrushSource: SystemFillColorSuccessBrush IS Light/Dark/HighContrast ThemeDictionary-
-                 scoped (unlike SystemAccentColor - AccentBrushSource/AccentFillBrushSource above are read
-                 as live elements for a different reason, see their own doc comments - but the same fix
-                 applies here too), so a flat Application.Current.Resources[] indexer lookup for this key
-                 would resolve against Application.RequestedTheme/ActualTheme, not RootGrid's own
-                 ActualTheme - these disagree once the in-app Theme setting overrides the OS default (this
-                 app only ever sets RootGrid.RequestedTheme, never Application.Current.RequestedTheme - see
-                 ApplyTheme). This live element's already-resolved Foreground sidesteps that entirely,
-                 since a real FrameworkElement's ActualTheme correctly inherits from RootGrid instead. -->
+            <!-- SuccessBrushSource: SystemFillColorSuccessBrush is Light/Dark/HighContrast
+                 ThemeDictionary-scoped, so a flat resource-dictionary lookup would resolve against
+                 Application.RequestedTheme/ActualTheme, not RootGrid's own - these disagree once the
+                 in-app Theme setting overrides the OS default. This live element's already-resolved
+                 Foreground sidesteps that, since a real FrameworkElement's ActualTheme correctly
+                 inherits from RootGrid instead. -->
             <TextBlock x:Name="SuccessBrushSource" Foreground="{ThemeResource SystemFillColorSuccessBrush}" Visibility="Collapsed" />
-            <!-- PrimaryBrushSource/OnAccentBrushSource: used by UpdateRandomizeIntervalIndicator to pick
-                 RandomizeIntervalIcon's Foreground - TextOnAccentFillColorPrimaryBrush (the same brush
-                 the ToggleButton's default ControlTemplate uses for ToggleButtonForegroundChecked -
-                 black on the accent pill in Dark theme, white on it in Light theme) only while Checked
-                 AND enabled (Opacity 1), since that color is tuned specifically for the fully-opaque,
-                 vivid accent-filled pill that state alone has; TextFillColorPrimaryBrush (matching
-                 IntervalCaptionTextBlock's own undimmed base color - white in Dark theme, black in Light
-                 theme, i.e. the app's ordinary theme-correct text direction, the opposite of
-                 OnAccentBrushSource's) only while idle (Unchecked and enabled, Opacity 0.8). Checked AND
-                 locked deliberately uses neither of these two elements - its Foreground is ClearValue'd
-                 instead, inheriting the ContentPresenter's own default CheckedDisabled-VisualState color
-                 (ToggleButtonForegroundCheckedDisabled/TextOnAccentFillColorDisabled), since that state's
-                 pill is also left at the default ToggleButtonStyle look now (RandomizeIntervalButton.Resources
-                 no longer overrides ToggleButtonBackgroundCheckedDisabled - only its border stays
-                 customized). The remaining state, Unchecked AND locked, uses DisabledBrushSource just
-                 above instead, at Opacity 0.6. So the glyph is always
-                 readable against whatever's actually behind it, never a single hardcoded constant. -->
-            <TextBlock x:Name="PrimaryBrushSource" Foreground="{ThemeResource TextFillColorPrimaryBrush}" Visibility="Collapsed" />
-            <TextBlock x:Name="OnAccentBrushSource" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" Visibility="Collapsed" />
 
-            <!-- Status line: positioned directly above the ON/OFF pill (row 5), rather than up near the
-                 cards separated from the pill by the "*" filler row (row 3) - this line also acts as
+            <!-- Status line: positioned directly above PowerToggleButton (row 5) - this line also acts as
                  the running countdown/interval timer, so it reads more naturally right next to the
-                 button it corresponds to. ModeSegmentedControl no longer sits next to this row - it
-                 moved to the top of MainContentGrid (row 0) - so "directly above the pill" now refers
-                 only to this status line's own position, not a pairing with the mode selector.
-                 StatusLabelStyle's
-                 TextWrapping="Wrap" (above) lets this row grow past one line without clipping/overflowing
-                 the fixed-width window - needed for "Stop button display" = None, whose combined
-                 countdown-plus-count text (see MainWindow.xaml.cs's GetStatusBarText) can run meaningfully
-                 longer than anything else ever shown here; row 3's "*" filler absorbs the extra height a
-                 second line takes, same as it already absorbs slack for everything else in this column. -->
+                 button it corresponds to. StatusLabelStyle's TextWrapping="Wrap" lets this row grow past
+                 one line without overflowing the fixed-width window - needed for "Stop button display" =
+                 None, whose combined countdown-plus-count text (see GetStatusBarText) can run
+                 meaningfully longer than anything else shown here; row 3's "*" filler absorbs the extra
+                 height a second line takes. -->
             <controls:StatusLabel
                 x:Name="StatusTextBlock"
                 Grid.Row="4"
@@ -819,81 +1715,33 @@
                 Style="{StaticResource StatusLabelStyle}"
                 AutomationProperties.AutomationId="StatusTextBlock" />
 
-            <!-- Mode selector (auto click / jiggle): the very first thing in MainContentGrid (row 0),
-                 left-aligned to the same left edge the Interval/Auto Stop cards below it already sit on
-                 (MainContentGrid's own Padding insets everything consistently - HorizontalAlignment
-                 here is "Left", not the default Stretch/Center, specifically so this control doesn't
-                 also stretch/center itself away from that shared edge). It used to sit at the bottom of
-                 the window instead, directly above the ON/OFF pill, with a title bar subtitle
-                 (ModeSubtitleTextBlock, since removed - see AppTitleBarGrid's own comment) reflecting
-                 the selection. That subtitle is what made icon-only acceptable down there: the subtitle
-                 spelled out "Auto click"/"Jiggle" in words, so the segmented control itself only had
-                 to carry the icon. Now that this control is the ONLY place the mode is shown at all, and
-                 sits at the top of the window in the title bar's place, each segment shows both the icon
-                 and a text label directly (see the two SegmentedItems below) - there's no longer a
-                 separate subtitle anywhere to spell it out.
+            <!-- Mode selector (auto click / jiggle): the first thing in MainContentGrid (row 0),
+                 left-aligned to the same left edge the Interval/Auto Stop cards below it sit on. This is
+                 the only place the mode is shown, so each segment shows both an icon and a text label.
 
-                 This is a CommunityToolkit Segmented control, not a hand-built switch: it was previously
-                 a single custom Button (ModeSwitchButton) wrapping two manually-styled 48x48 boxes,
-                 before that a pair of mutually-exclusive ToggleButtons - both earlier designs needed
-                 code-behind (ApplySelectedModeBoxStyle) to hand-roll the accent-colored
-                 selected/unselected/disabled looks from scratch. Segmented is the platform-native
-                 control for exactly this "2-5 mutually-exclusive short toggles" shape, so it gets all of
-                 that for free: selected/unselected/hover/pressed/disabled visuals, keyboard navigation,
-                 and correct UI Automation selection semantics, all from its own default ControlTemplate
-                 - deliberately left completely unstyled here (no custom Background/BorderBrush/Resources
-                 overrides) rather than reproducing the old accent-tinted chip look, since the whole
-                 point of this control is to stop hand-rolling that.
+                 A CommunityToolkit Segmented control, not a hand-built switch, so it gets
+                 selected/unselected/hover/pressed/disabled visuals, keyboard navigation, and UI
+                 Automation selection semantics for free from its own default ControlTemplate -
+                 deliberately left unstyled here rather than reproducing a custom chip look.
 
-                 SelectionMode defaults to Single (exactly one of the two items selected at all times,
-                 never zero/both), which is exactly the switch semantics this needs - ModeSegmentedControl_
-                 SelectionChanged in code-behind is the single place that reacts to a selection change,
-                 whether it came from the user tapping a segment or from SetSelectedMode forcing one
-                 programmatically (see that method - used by the tray context menu's "Start Auto
-                 Click"/"Start Jiggle" items).
+                 SelectionMode defaults to Single (exactly one item selected at all times).
+                 ModeSegmentedControl_SelectionChanged in code-behind is the single place that reacts to
+                 a selection change, whether from a user tap or SetSelectedMode forcing one
+                 programmatically (used by the tray's "Start Auto Click"/"Start Jiggle" items).
 
                  Each SegmentedItem's Content is a horizontal StackPanel (icon + TextBlock label) rather
-                 than the more obvious-looking SegmentedItem.Icon property paired with a plain string
-                 Content (the pattern the Toolkit's own gallery samples use, e.g.
-                 Icon="{ui:FontIcon Glyph=...}" Content="Item 1"). That combination was tried first and
-                 reverted: Icon's own layout slot sizes a FontIcon and a SymbolIcon differently even at
-                 matching nominal FontSize/ScaleTransform values - the exact FontIcon-vs-SymbolIcon
-                 mismatch this control's icon-only predecessor already had to solve once, with a Viewbox
-                 (see below) - so handing icons to SegmentedItem.Icon directly reintroduced a
-                 already-solved problem rather than actually needing the Icon property's own layout
-                 behavior for anything. Composing Content by hand keeps the previously-validated Viewbox
-                 fix intact and additionally lets ClickModeIcon/JiggleModeIcon each keep their own x:Name
-                 and RenderTransform for the wiggle/spin animations below, which the Icon property's
-                 {ui:FontIcon ...} markup-extension shorthand can't carry (it produces an anonymous
-                 icon), and which SegmentedItem.Icon (an IconElement-typed property - Viewbox isn't one)
-                 couldn't host a Viewbox for in the first place.
+                 than SegmentedItem.Icon paired with a plain string Content: Icon's own layout slot sizes
+                 a FontIcon differently than expected, and it can't carry ClickModeIcon/JiggleModeIcon's
+                 own x:Name/RenderTransform needed for the wiggle/spin animations below.
+                 Each icon is wrapped in its own Viewbox rather than sized via FontSize/ScaleTransform, so
+                 it scales to exactly fill a given box size regardless of the glyph's own nominal ink
+                 size, keeping both icons reading as the same visual size next to their labels.
+                 ClickModeIcon's Viewbox keeps Margin="1,0,-1,0" since the click-cursor glyph's ink reads
+                 as visually off-center otherwise; this nudges it 1px right without changing the space
+                 available for centering.
+                 Width/MinWidth (112x38) are set to the same value on both SegmentedItems so they don't
+                 size independently to different widths given "Auto click" is longer than "Jiggle". -->
 
-                 Within each StackPanel, the icon is still wrapped in its own Viewbox rather than sized
-                 via FontSize/ScaleTransform directly, for the reason above: a Viewbox scales whatever it
-                 contains to exactly fill a given box size regardless of the child's own type/nominal
-                 size, which is what keeps ClickModeIcon and JiggleModeIcon (both FontIcon now, but
-                 different glyphs with different nominal ink sizes) reading as the same visual size next
-                 to their labels. Viewbox sizes are smaller now (16x16/15x15,
-                 down from the old icon-only design's 19x19/18x18) since the icon now shares each segment
-                 with a text label instead of being the only content - confirmed by eye against a
-                 screenshot that this size still reads clearly at a glance next to the label text.
-                 ClickModeIcon's Viewbox keeps its own Margin="1,0,-1,0" - the click-cursor glyph's ink is
-                 mathematically centered in its character cell but reads as visually off-center to the
-                 eye (the same optical illusion the old pre-Segmented design's own comment already
-                 documented and fixed the same way) - this equal-and-opposite left/right margin nudges
-                 the glyph 1px right without changing the space available for centering. JiggleModeIcon's
-                 Mouse glyph doesn't have this problem, so its own Viewbox stays margin-free.
-
-                 Width/MinWidth are set to the exact same value on both SegmentedItems (rather than left
-                 to auto-size independently, which would make them different widths given "Auto click" is
-                 longer than "Jiggle" - the reverse of when this was "Spin mode", the longer label back
-                 then) - sized to comfortably fit "Auto click" (now the longer of the two icon+label
-                 combinations) plus its own internal padding, measured empirically via UI
-                 automation on a freshly-launched build and then adjusted by eye against a screenshot.
-                 112x38 (down from an initial 132x48) and the StackPanel's icon-label Spacing of 6 (down
-                 from 8) are a tightened footprint requested after the first pass read as too large -
-                 icon Viewbox sizes (16x16/15x15) and the label's font size are untouched by this pass,
-                 so only the padding/gaps around that fixed-size content shrank. -->
                 <toolkit:Segmented
                     x:Name="ModeSegmentedControl"
                     Grid.Row="0"
@@ -905,13 +1753,9 @@
                     <toolkit:Segmented.Resources>
                         <!-- Icon-level animations: ClickModeIcon gets a quick tilt/wiggle (mimics a click
                              gesture), JiggleModeIcon gets a quick back-and-forth shake (mimics jiggling in
-                             place - deliberately NOT a full rotation, which would read as "spinning on an
-                             axis" rather than "jiggling", the exact distinction this mode was renamed away
-                             from Spin to avoid). Both play from ModeSegmentedControl_SelectionChanged on
-                             whichever icon just became selected; icon size/position is untouched - only
-                             RotateTransform.Angle animates. (The old design also had a "pop-in" scale
-                             animation on the selected box itself - dropped along with the boxes themselves;
-                             Segmented's own selection visuals already animate.) -->
+                             place, deliberately not a full rotation, which would read as "spinning" rather
+                             than "jiggling"). Both play from ModeSegmentedControl_SelectionChanged on
+                             whichever icon just became selected; only RotateTransform.Angle animates. -->
                         <Storyboard x:Name="ClickModeIconWiggleStoryboard">
                             <DoubleAnimation
                                 Storyboard.TargetName="ClickModeIconRotateTransform"
@@ -981,21 +1825,13 @@
                     </toolkit:SegmentedItem>
                 </toolkit:Segmented>
 
-                <!-- Settings gear: sits on the same row as ModeSegmentedControl, right-aligned
-                     opposite its left alignment so the two share Row 0 without overlapping (this
-                     Grid has no ColumnDefinitions - HorizontalAlignment alone is enough to keep them
-                     apart, given the row's actual content never gets close to filling MainContentGrid's
-                     full width). Icon-only (no visible caption) - same gear glyph and Click handler as
-                     the button this replaces (which used to be anchored to the bottom-right corner of
-                     the whole content area instead - see git history on this branch). CornerRadius (6)
-                     matches both ModeSegmentedControl's own outer CornerRadius and the individual
-                     SegmentedItems' CornerRadius, now that all three agree. Width/Height (38) matches
-                     SegmentedItem's own Height exactly, so the two visually line up with no Margin
-                     nudge needed. Square icon button, mirroring the previous button's own square
-                     (32x32) proportions.
-                     Still implicitly hidden while Settings is open - it's a child of MainContentGrid,
-                     which goes fully Collapsed then (see ShowSettingsOverlay's own comment for why that
-                     needs no separate Visibility toggle here). -->
+                <!-- Settings gear: sits on the same row as ModeSegmentedControl, right-aligned opposite
+                     its left alignment so the two share Row 0 without overlapping. Icon-only.
+                     CornerRadius (6) matches ModeSegmentedControl's own outer CornerRadius and its
+                     SegmentedItems. Width/Height (38) matches SegmentedItem's own Height so the two
+                     visually line up with no Margin nudge needed.
+                     Implicitly hidden while Settings is open, since it's a child of MainContentGrid,
+                     which goes fully Collapsed then (see ShowSettingsOverlay). -->
                 <Button
                     x:Name="SettingsButton"
                     Grid.Row="0"
@@ -1012,10 +1848,9 @@
                     <FontIcon Glyph="&#xE713;" FontSize="15" />
                 </Button>
 
-            <!-- Big ON/OFF pill. Height is explicit (matching the pill area's original footprint from
-                 when GlowBorder - since removed - was the tallest child) so this row doesn't shrink;
-                 otherwise the "*" filler row above (row 2) would expand to absorb the freed space,
-                 pushing the mode selector/status text/pill (rows 3-5) down. -->
+            <!-- Big PowerToggleButton (the app's Start/Stop button). Height is explicit so this row
+                 doesn't shrink; otherwise the "*" filler row above (row 2) would expand to absorb the
+                 freed space, pushing the mode selector/status text/PowerToggleButton (rows 3-5) down. -->
             <Grid Grid.Row="5" HorizontalAlignment="Stretch" Height="72">
                 <ToggleButton
                     x:Name="PowerToggleButton"
@@ -1033,54 +1868,35 @@
                     AutomationProperties.AutomationId="PowerToggleButton"
                     AutomationProperties.Name="Power, Start">
                     <!-- PointerPressed/PointerReleased/PointerCanceled/PointerCaptureLost are deliberately
-                         NOT wired here as plain attributes (unlike PointerEntered/PointerExited above) -
-                         ButtonBase's own internal press handling marks PointerPressed/PointerReleased
-                         e.Handled = true before instance handlers attached the normal XAML-attribute way
-                         ever run, so a plain PointerPressed="..." attribute here would silently never
-                         fire (confirmed empirically: the native CheckedPressed VisualState engaged
-                         correctly while a plain-attribute-wired handler never did). See MainWindow's
-                         constructor (MainWindow.xaml.cs) for the AddHandler(..., handledEventsToo: true)
-                         calls that wire PowerToggleButton_PointerPressed/_PointerReleased/_PointerCanceled/
-                         _PointerCaptureLost instead - handledEventsToo:true is what lets them still fire
-                         despite ButtonBase already marking the event handled. -->
+                         not wired here as plain attributes (unlike PointerEntered/PointerExited above) -
+                         ButtonBase's own internal press handling marks those events Handled before a
+                         plain XAML-attribute handler would ever see them. See MainWindow's constructor
+                         for the AddHandler(..., handledEventsToo: true) calls that wire them instead. -->
 
-                    <!-- Content is icon + label (instead of a plain string) so the pill always reads as
-                         "what will happen if you press this" - a Play glyph + "Start" while off, a Stop
-                         glyph + "Stop" while on - matching the icon+label StackPanel pattern used by the
-                         Theme ComboBoxItems above. PowerToggleIcon/PowerToggleLabel are updated in place
-                         from code-behind (PowerToggleButton_Checked/_Unchecked) rather than replacing
-                         Content wholesale, since only the glyph and text ever change. Countdown mode's
-                         Paused/Starting indicators are a wholly separate element (PowerToggleAlternateButton,
-                         below, swapped in via Visibility) rather than anything layered on top of this button -
-                         see PowerToggleAlternateButton's own comment for why. -->
+                    <!-- Content is icon + label (instead of a plain string) so PowerToggleButton always
+                         reads as "what will happen if you press this" - a Play glyph + "Start" while off, a Stop
+                         glyph + "Stop" while on. PowerToggleIcon/PowerToggleLabel are updated in place
+                         from code-behind rather than replacing Content wholesale. Countdown mode's
+                         Paused/Starting indicators are a wholly separate element
+                         (PowerToggleAlternateButton, below, swapped in via Visibility) rather than
+                         anything layered on top of this button. -->
                     <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" VerticalAlignment="Center">
                         <FontIcon x:Name="PowerToggleIcon" Glyph="&#xE768;" FontSize="16" />
                         <TextBlock x:Name="PowerToggleLabel" Text="Start" Typography.NumeralAlignment="Tabular" />
                     </StackPanel>
                 </ToggleButton>
 
-                <!-- Countdown mode's Paused/Starting indicator (see MainWindow.xaml.cs's
+                <!-- Countdown mode's Paused/Starting indicator (see
                      UpdatePowerButtonCountdownDisplay/UpdateAlternateButtonDisplay/ShowPowerButton) - a
-                     wholly separate, independent Button (not a ToggleButton) occupying the exact same Grid
-                     cell as PowerToggleButton, rather than anything layered on top of PowerToggleButton's own
-                     template-driven background - recoloring that real background directly, and later
-                     painting an overlay on top of it, both fought a real ToggleButton's own rendering and
-                     each caused a different bug (see git history on this branch). Swapping between two
-                     separate elements removed that whole class of bug at the root - which is also why this
-                     one element, not PowerToggleButton itself, is what took on a second state (Click mode's
-                     3-second startup grace, shown here in green while Countdown mode is selected) later on:
-                     reusing the same already-proven mechanism was cheaper and safer than finding a second way
-                     to safely recolor a real ToggleButton's own background.
-
+                     wholly separate, independent Button (not a ToggleButton) occupying the exact same
+                     Grid cell as PowerToggleButton, rather than anything layered on top of
+                     PowerToggleButton's own template-driven background - recoloring that background
+                     directly fights a real ToggleButton's own rendering. Swapping between two separate
+                     elements avoids that whole class of bug.
                      Shown/hidden via plain Visibility (ShowPowerButton) - only one of
                      PowerToggleButton/PowerToggleAlternateButton is ever actually in the visual tree at a
-                     time, swapped instantly with no transition of any kind (an earlier version played a
-                     "fake Start" recolor-then-swap animation specifically to paper over PowerToggleButton
-                     briefly flashing its real accent-blue color right as it's revealed - see git history on
-                     this branch - but that flash, if it still happens at all, is no longer visually
-                     significant now that PowerToggleAlternateButton's own Paused color is accent-based too,
-                     so the masking animation was removed rather than kept for a mismatch that no longer
-                     reads as wrong). Sized identically to PowerToggleButton so the swap is seamless. -->
+                     time, swapped instantly with no transition. Sized identically to PowerToggleButton so
+                     the swap is seamless. -->
                 <Button
                     x:Name="PowerToggleAlternateButton"
                     Width="220"
@@ -1098,36 +1914,30 @@
                     AutomationProperties.Name="Power, Stop">
                     <!-- Locally shadows the exact resource keys DefaultButtonStyle's own CommonStates
                          VisualState Storyboards read via {ThemeResource ...} for ContentPresenter.Background
-                         (generic.xaml: Normal uses Background="{ThemeResource ButtonBackground}",
-                         PointerOver/Pressed swap in ButtonBackgroundPointerOver/ButtonBackgroundPressed via
-                         an ObjectAnimationUsingKeyFrames at Animation-tier precedence, which a plain
-                         PowerToggleAlternateButton.Background SetValue from code-behind can never outrank).
-                         Shadowing these three keys here means that Storyboard resolves to OUR named brushes
-                         instead of the system defaults - it's still what drives which brush shows for which
-                         state, we just control what color each one holds.
+                         (generic.xaml: Normal uses ButtonBackground, PointerOver/Pressed swap in
+                         ButtonBackgroundPointerOver/ButtonBackgroundPressed via an
+                         ObjectAnimationUsingKeyFrames at Animation-tier precedence, which a plain
+                         Background SetValue from code-behind can never outrank). Shadowing these three
+                         keys means that Storyboard resolves to our named brushes instead of the system
+                         defaults.
                          UpdateAlternateButtonDisplay/ApplyAlternateButtonBackgroundBrushes mutate each
-                         brush's own Color in place - NEVER ClearValue (that reverts a {ThemeResource}-sourced
-                         Color to the DP's registered default, Colors.Transparent, not back to the
-                         expression). x:Name (alongside x:Key) is what lets code-behind reach these as
-                         strongly-typed fields despite living inside a Resources dictionary - x:Name still
-                         registers into the page's single namescope regardless of nesting. -->
+                         brush's Color in place - never ClearValue, which would revert to Colors.Transparent
+                         instead. x:Name (alongside x:Key) is what lets code-behind reach these as
+                         strongly-typed fields despite living inside a Resources dictionary. -->
                     <Button.Resources>
                         <SolidColorBrush x:Key="ButtonBackground" x:Name="PowerToggleAlternateNormalBrush" Color="Transparent" />
                         <SolidColorBrush x:Key="ButtonBackgroundPointerOver" x:Name="PowerToggleAlternatePointerOverBrush" Color="Transparent" />
                         <SolidColorBrush x:Key="ButtonBackgroundPressed" x:Name="PowerToggleAlternatePressedBrush" Color="Transparent" />
                     </Button.Resources>
                     <!-- Click (not Checked/Unchecked - this is a plain Button) just flips PowerToggleButton's
-                         own IsChecked off (see PowerToggleAlternateButton_Click), reusing PowerToggleButton_
-                         Unchecked's entire stop path - including the stop-while-paused transition that swaps
-                         this button back out - rather than duplicating any of that here.
+                         own IsChecked off, reusing PowerToggleButton_Unchecked's entire stop path rather
+                         than duplicating any of that here.
                          PointerPressed/PointerReleased/PointerCanceled/PointerCaptureLost are deliberately
-                         NOT wired here as plain attributes, same reasoning as PowerToggleButton above -
-                         ButtonBase marks those events Handled internally before a plain XAML-attribute
-                         handler would ever see them. See MainWindow's constructor for the
-                         AddHandler(..., handledEventsToo: true) calls that wire this button's press/
-                         release/cancel/capture-lost the same way PowerToggleButton's are, reusing the exact
-                         same handler methods (they only read/write the shared _isPowerButtonPressed flag,
-                         which doesn't care which physical element the pointer is actually pressing). -->
+                         not wired here as plain attributes, same reasoning as PowerToggleButton above. See
+                         MainWindow's constructor for the AddHandler(..., handledEventsToo: true) calls
+                         that wire this button's press/release/cancel/capture-lost the same way, reusing
+                         the same handler methods (they only read/write the shared _isPowerButtonPressed
+                         flag). -->
                     <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" VerticalAlignment="Center">
                         <FontIcon x:Name="PowerToggleAlternateIcon" Glyph="&#xF8AE;" FontSize="16" />
                         <TextBlock x:Name="PowerToggleAlternateLabel" Text="Paused" Typography.NumeralAlignment="Tabular" />
@@ -1136,17 +1946,13 @@
             </Grid>
         </Grid>
 
-        <!-- Confirmation shown from AppWindow_Closing (code-behind) when the user tries to close the
-             window (X button, Alt+F4, taskbar close, etc.) while _engine.IsRunning is true - guards
-             against an accidental close mid-automation. DefaultButton is Close (not Primary) so
-             pressing Enter/Escape lands on the safe, non-destructive option rather than exiting.
-             Deliberately a sibling of MainContentGrid/SettingsOverlay (not nested inside either) -
-             it used to live inside MainContentGrid, but a Collapsed ancestor is excluded from layout
-             entirely, so ContentDialog's own content subtree never got measured/arranged whenever this
-             was triggered while Settings was open (MainContentGrid collapsed) - only its window-level
-             dimming overlay showed, with no visible dialog and no way back in. AppWindow_Closing can
-             fire at any time regardless of what's currently visible, so this can never be nested inside
-             something that might be collapsed. -->
+        <!-- Confirmation shown from AppWindow_Closing when the user tries to close the window (X
+             button, Alt+F4, taskbar close, etc.) while _engine.IsRunning is true. DefaultButton is
+             Close (not Primary) so pressing Enter/Escape lands on the safe option.
+             Deliberately a sibling of MainContentGrid/SettingsOverlay, not nested inside either - a
+             Collapsed ancestor is excluded from layout entirely, so this dialog's content subtree would
+             never get measured/arranged if triggered while Settings was open (MainContentGrid
+             collapsed): only the window-level dimming overlay would show, with no visible dialog. -->
         <ContentDialog
             x:Name="CloseConfirmationDialog"
             Title="Automation is still running"
@@ -1160,27 +1966,19 @@
             </ContentDialog.Content>
         </ContentDialog>
 
-        <!-- Settings overlay: covers only the content area below AppTitleBarGrid - it's a sibling
-             of the Grid above sharing the same RootGrid row, declared after it so it paints on top.
-             AppTitleBarGrid itself is untouched/still visible, which is what keeps "MouseUtil"
-             showing and Mica/theme working automatically with no extra plumbing. Hosts the single
-             SettingsPanel instance (see Controls/SettingsPanel.xaml), permanently parented into
+        <!-- Settings overlay: covers only the content area below AppTitleBarGrid - a sibling of the
+             Grid above sharing the same RootGrid row, declared after it so it paints on top.
+             AppTitleBarGrid itself stays visible, which keeps "MouseUtil" showing and Mica/theme
+             working automatically. Hosts the single SettingsPanel instance, permanently parented into
              SettingsHost below.
 
-             Padding deliberately omits the right/bottom inset (left/top only): the ScrollViewer
-             below needs its own bounds to reach the window's true right edge so its scrollbar hugs
-             that edge instead of floating ~24px inboard of it on top of the content - the visual
-             inset that used to live here moves onto SettingsHost's own Margin instead.
+             Padding deliberately omits the right/bottom inset: the ScrollViewer below needs its own
+             bounds to reach the window's true right edge so its scrollbar hugs that edge instead of
+             floating over the content - the visual inset moves onto SettingsHost's own Margin instead.
 
              No Background set at all (same as AppTitleBarGrid above) so the window's MicaBackdrop
-             shows through identically in both - a tinted "elevated surface" brush (e.g.
-             LayerOnMicaBaseAltFillColorDefaultBrush) was tried here and reverted: it's meant for a
-             panel that reads as visually distinct from the Mica around it, but this overlay covers
-             nearly the entire window, so that contrast just showed up as a hard seam against
-             AppTitleBarGrid's untinted Mica instead of one continuous surface. MainContentGrid is
-             collapsed (see ShowSettingsOverlay) to hide the controls that would otherwise still
-             show through a transparent background - that's a separate concern from the backdrop
-             itself. -->
+             shows through identically in both. MainContentGrid is collapsed (see ShowSettingsOverlay)
+             to hide the controls that would otherwise show through a transparent background. -->
         <Grid
             x:Name="SettingsOverlay"
             Grid.Row="1"
@@ -1191,49 +1989,27 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <!-- Top-left Back affordance (standard back-button convention) - icon-only (no "Back"
-                 caption) now that the "Settings" page title sits right next to it instead of below
-                 it, which already makes clear what pressing it returns to. Click reverses
-                 ShowSettingsOverlay (see SettingsBackButton_Click below); it also receives
-                 programmatic focus right after the overlay opens (see ShowSettingsOverlay) so
-                 MinutesBox/SecondsBox can't be left holding keyboard focus underneath this opaque
-                 overlay - see the fix's comment there for why that matters (NumberBox's Compact
-                 spin-button popup renders above everything otherwise). AutomationProperties.Name
-                 keeps "Back" as its accessible name even with no visible text.
-
-                 A plain Button rather than a HyperlinkButton: HyperlinkButton's default template
-                 forces the hand/link pointer cursor on hover, which read as misleading here (this
-                 isn't a hyperlink navigating anywhere external, just an in-app Back action) - Button
-                 keeps the regular arrow cursor. Foreground uses the regular text color
-                 (TextFillColorPrimaryBrush) rather than an accent color - now that this is icon-only
-                 sitting right next to the "Settings" title, an accent tint read as an odd one-off
-                 splash of color rather than a hyperlink cue. Background/BorderBrush stay Transparent
-                 with a non-zero BorderThickness so the default ControlTemplate's PointerOver/Pressed
-                 states still have something to render into for hover feedback. -->
-            <!-- Two-column header Grid: icon-only Back button (Auto), "Settings" page title taking
-                 the remaining space ("*"). The title used to live inside SettingsPanel.xaml itself,
-                 above the Interface card - moved here, next to the back button, so the two read as
-                 one unit instead of the title floating alone in the scrollable content below. Right
-                 margin on this Grid matches SettingsHost's own right Margin below (24) - SettingsOverlay's
-                 own Padding omits the right inset (see its comment above), so without this the title
-                 would sit flush against the window's true right edge instead of aligning with the
-                 cards' right edge underneath it. The version used to be shown here too
-                 (SettingsVersionText) - removed in favor of SettingsPanel's own About card, which
-                 shows it as that card's Description instead. -->
+            <!-- Top-left Back affordance - icon-only, since the "Settings" page title sits right next
+                 to it. Click reverses ShowSettingsOverlay; it also receives programmatic focus right
+                 after the overlay opens so MinutesBox/SecondsBox can't be left holding keyboard focus
+                 underneath this opaque overlay (NumberBox's Compact spin-button popup renders above
+                 everything otherwise). AutomationProperties.Name keeps "Back" as its accessible name.
+                 A plain Button rather than a HyperlinkButton, since HyperlinkButton forces the hand/link
+                 cursor, which reads as misleading for an in-app Back action. Foreground uses the regular
+                 text color rather than accent, since an accent tint reads as an odd splash of color
+                 next to the page title. -->
+            <!-- Two-column header Grid: icon-only Back button (Auto), "Settings" page title taking the
+                 remaining space ("*"). Right margin on this Grid matches SettingsHost's own right
+                 Margin below, since SettingsOverlay's own Padding omits the right inset. -->
             <Grid Grid.Row="0" Margin="0,0,24,16">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <!-- Padding 6 (up from 2) grows the button's own outer footprint ~22x22 -> ~26x26,
-                     while FontSize 12 (down from 16) shrinks the glyph itself back down - a bigger
-                     button with a smaller icon inside it. Growing the button widens Column0's Auto
-                     width by the same ~4px, which would otherwise push the "Settings" title in
-                     Column1 to the right - compensated by trimming that title's own left Margin from
-                     8 to 4 (the same 4px the button grew by), so its on-screen position stays exactly
-                     where it was. Button height (~26) still stays under the "Settings" title's own
-                     text height (~27, the row's Auto height driver), so the row itself doesn't grow
-                     and nothing below it (the ScrollViewer/cards) shifts either. -->
+                <!-- Padding="6" grows the button's outer footprint to ~26x26 with a smaller FontSize=12
+                     glyph inside it - a bigger button with a smaller icon. The title's left Margin="4"
+                     compensates for the button's grown width so its on-screen position stays put, and
+                     the button's height stays under the title's own text height so the row doesn't grow. -->
                 <Button
                     x:Name="SettingsBackButton"
                     Grid.Column="0"
@@ -1256,12 +2032,22 @@
                     Style="{StaticResource BodyLargeStrongTextBlockStyle}" />
             </Grid>
 
-            <!-- SettingsHost's right/bottom Margin is where SettingsOverlay's own removed
-                 right/bottom Padding moved to (see that Grid's comment above): the settings rows
-                 stay visually inset from the window's true edges, while the ScrollViewer wrapping
-                 this Grid extends all the way to them, so its scrollbar renders flush against the
-                 true right edge instead of floating over the content. -->
-            <ScrollViewer x:Name="SettingsScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <!-- SettingsHost's right/bottom Margin is where SettingsOverlay's own removed right/bottom
+                 Padding moved to: the settings rows stay visually inset from the window's true edges,
+                 while the ScrollViewer wrapping this Grid extends all the way to them, so its
+                 scrollbar renders flush against the true right edge instead of floating over the content.
+
+                 VerticalAnchorRatio="NaN" turns off ScrollViewer's built-in scroll anchoring (default
+                 0.0, anchored to the viewport's top edge). That native feature exists to keep content
+                 stable when off-screen content resizes, but it was the cause of an "expanding a
+                 SettingsCard scrolls the page unnecessarily" bug: ScrollViewer picks an anchor element
+                 the first time content resizes, and a later, unrelated card's resize "corrects" the
+                 scroll offset against that stale anchor, snapping the just-expanded card to the top of
+                 the viewport even though it already fit on screen. All of this app's Settings content
+                 is local, synchronous, and fixed-size the instant it's realized, so anchoring has
+                 nothing legitimate to do here - ScrollExpanderIntoView/AboutExpanderExpanded already
+                 own this ScrollViewer's intentional expand-triggered scrolling. -->
+            <ScrollViewer x:Name="SettingsScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" VerticalAnchorRatio="NaN">
                 <Grid x:Name="SettingsHost" Margin="0,0,24,24" />
             </ScrollViewer>
         </Grid>

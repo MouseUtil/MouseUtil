@@ -28,27 +28,27 @@ internal static class NativeMethods
 
     public const int GWLP_WNDPROC = -4;
 
-    // Single-instance enforcement (see Services/SingleInstanceService and Services/GlobalHotkeyService)
-    // - RegisterWindowMessage mints a message id that every process registering the same string
-    // resolves to identically, so a second launch attempt can signal the first without any other IPC;
-    // FindWindow locates the first instance's window by its fixed title; PostMessage delivers the
-    // signal; SetForegroundWindow/ShowWindow bring it to the front, restoring it first if minimized.
+    // Single-instance enforcement (see Services/SingleInstanceService) - RegisterWindowMessage mints
+    // a message id every process resolves identically; FindWindow locates the first instance's window;
+    // SetForegroundWindow/ShowWindow bring it to front, restoring it first if minimized.
     public const int SW_RESTORE = 9;
 
+    // "Launch window" = "Minimized" (see MainWindow's constructor) - passed to ShowWindow so the
+    // window comes up already minimized, with no restored-then-collapsing flash.
+    public const int SW_SHOWMINNOACTIVE = 7;
+
     // System tray icon support (Shell_NotifyIcon) - see Services/TrayIconService, which registers
-    // WM_TRAYICON as a callback message through GlobalHotkeyService's existing WndProc subclass rather
-    // than installing its own. lParam of that callback message is one of the mouse message ids below
-    // (the icon's default, pre-NIM_SETVERSION behavior), telling us which mouse action occurred.
+    // WM_TRAYICON through GlobalHotkeyService's WndProc subclass. lParam of that callback message is
+    // one of the mouse message ids below, telling us which mouse action occurred.
     public const uint WM_TRAYICON = WM_APP + 1;
     public const uint WM_APP = 0x8000;
     public const uint WM_LBUTTONUP = 0x0202;
     public const uint WM_RBUTTONUP = 0x0205;
     public const uint WM_CONTEXTMENU = 0x007B;
 
-    // Broadcast by Windows when a system-wide setting changes, including the taskbar/tray
-    // light-vs-dark theme (Settings > Personalization > Colors) - see TrayIconService's
-    // WM_SETTINGCHANGE handler, which checks lParam for "ImmersiveColorSet" to detect that specific
-    // change and re-picks the inactive-state tray icon to match live, without a restart.
+    // Broadcast by Windows when a system-wide setting changes, including light/dark theme. See
+    // TrayIconService's handler, which checks lParam for "ImmersiveColorSet" to re-pick the tray
+    // icon live, without a restart.
     public const uint WM_SETTINGCHANGE = 0x001A;
 
     public const uint NIM_ADD = 0x00000000;
@@ -81,10 +81,9 @@ internal static class NativeMethods
         public int Y;
     }
 
-    // Mirrors the Win32 NOTIFYICONDATAW struct exactly (field order/sizes matter - this is passed by
-    // ref straight into shell32.dll). Only the fields TrayIconService actually sets (hWnd/uID/uFlags/
-    // uCallbackMessage/hIcon/szTip) are meaningful here; the rest exist purely so the struct's layout
-    // and cbSize match what Shell_NotifyIcon expects.
+    // Mirrors the Win32 NOTIFYICONDATAW struct exactly (field order/sizes matter - passed by ref
+    // straight into shell32.dll). Only hWnd/uID/uFlags/uCallbackMessage/hIcon/szTip are actually set;
+    // the rest exist so the struct's layout and cbSize match what Shell_NotifyIcon expects.
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     public struct NOTIFYICONDATA
     {

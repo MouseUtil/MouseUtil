@@ -4,10 +4,8 @@ using Microsoft.UI.Xaml.Controls;
 namespace MouseUtil.Controls;
 
 /// <summary>
-/// The set of color "tones" StatusLabel's status line can render in - one VisualState per tone (see
-/// StatusLabelStyle in MainWindow.xaml). Deliberately named after intent (Muted/Accent/Success/
-/// Critical/Caution) rather than after a specific brush, since the actual color each one maps to is
-/// entirely the ControlTemplate's concern.
+/// Color "tones" StatusLabel's status line can render in - one VisualState per tone. Named after
+/// intent rather than a specific brush; the actual color is the ControlTemplate's concern.
 /// </summary>
 public enum StatusTone
 {
@@ -20,16 +18,9 @@ public enum StatusTone
 
 /// <summary>
 /// Templated status-line Control whose Foreground is driven by a "Tone" VisualStateManager state
-/// group instead of a code-behind-assigned Brush instance. Replaces the old
-/// MainWindow.xaml.cs SetStatusText(string text, Brush foreground) pattern, where every call site had
-/// to snapshot one of MutedBrushSource/AccentBrushSource/SuccessBrushSource/CriticalBrushSource/
-/// CautionBrushSource's already-resolved Foreground Brush - a copy that never updated again and so
-/// went stale on the next theme change, until whatever next event happened to call SetStatusText.
-///
-/// Callers now just set <see cref="Text"/> and <see cref="Tone"/> (a plain enum); each Tone's
-/// VisualState.Setter in the ControlTemplate references a live {ThemeResource}, so WinUI reapplies
-/// the theme-correct color automatically - including immediately on a theme change while a non-Muted
-/// tone is active - the same way it already does for a disabled Button.
+/// group instead of a code-behind-assigned Brush instance. Callers just set <see cref="Text"/> and
+/// <see cref="Tone"/>; each Tone's VisualState.Setter references a live {ThemeResource}, so WinUI
+/// reapplies the theme-correct color automatically, including on a theme change.
 /// </summary>
 public sealed class StatusLabel : Control
 {

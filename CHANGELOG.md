@@ -2,6 +2,51 @@
 
 All notable changes to MouseUtil are documented in this file.
 
+## [2.2.0]
+
+### Added
+
+- **Customizable interval presets, in a new "Interval Options" flyout.** The Interval card's old
+  standalone "Randomize interval" icon-button is now a single button that opens a flyout holding that
+  same randomize toggle alongside up to 6 one-click interval presets and a "Full interval display" toggle
+  (previously Settings-only). Toggle "Edit" to arm preset selection, then click a preset to edit its
+  value right on the Interval card, right-click any preset for a "Use preset / Edit / Delete" menu or arm
+  the dedicated Delete mode to remove several in a row. Undo reverses the last delete or "Restore default
+  presets" for as long as the flyout stays open. Ships with 3 presets (100ms, 15s, 1m); deleting all of
+  them swaps "Edit" for a single "Add preset" prompt instead of leaving an empty grid. A small badge now
+  appears directly on the Interval card whenever Randomize is on, so its state stays visible without opening the flyout. Both toggles persist across launches.
+
+- **"Launch window" setting** (Settings > App launch behavior): choose whether MouseUtil's window starts
+  Normal, Minimized, or hidden to the System tray (the last option only selectable while "Close to tray"
+  is on, and auto-reverting to Normal if that's later turned off).
+
+### Changed
+
+- **Auto Stop dialog redesigned with a three-way segmented control** - Date & time / Duration / Action
+  count - replacing the previous pair of "Stop after N clicks/jiggles" / "Stop at date & time" radio
+  buttons. "Duration" (stop after running for a set length of time) is an all-new mode; "Date & time"
+  covers both a one-shot stop and a recurring daily stop in the same tab, switched with a "Pick a date"
+  toggle. Both "Action count" (3 one-click presets, default 30/100/500) and "Duration" (3 one-click
+  Hours/Minutes/Seconds presets, default 30m/4h/24h) have customizable presets: an Edit button arms all
+  three slots for editing at once; Confirm saves them, Cancel discards, and a separate Reset button
+  restores the shipped defaults without leaving edit mode.
+
+- **Auto click/Jiggle status captions reworked.** A brief (300ms) "Clicked" (Click mode) or "Jiggling
+  now" (Jiggle mode) caption now shows right *after* each action fires, replacing the old behavior of
+  flashing "Clicking now"/"Jiggling now" for the last 100ms *before* firing. Resuming from a
+  movement-triggered pause shows "Resuming now" the same way. The paused state's wording is simplified
+  too - the resume countdown now reads plain "Resuming in Xs" instead of "Paused... Resuming in Xs".
+  Intervals at or under 1 second keep a static "Clicking"/"Jiggling" label the whole time, since a live
+  countdown would tick over too fast to read.
+
+- **The interval floor (minimum interval Auto click/Jiggle can run at) is lowered from 50ms to 20ms**,
+  matching the fastest interval other auto-clickers typically expose, backed by a high-resolution
+  waitable timer (`CreateWaitableTimerEx` with `CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`, Windows 10
+  1803+) for the final stretch of each wait, falling back to `Thread.Sleep` pre-1803, instead of relying
+  solely on `Task.Delay`, whose ~15.6ms OS timer granularity would otherwise dominate the fire-time error
+  at intervals this fast. Starting automation with a configured interval of exactly 0 is now explicitly
+  rejected ("Enter an interval greater than 0") instead of being silently bumped up to the floor.
+
 ## [2.1.0]
 
 ### Added

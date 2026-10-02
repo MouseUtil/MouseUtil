@@ -5,41 +5,30 @@ namespace MouseUtil.Services;
 
 /// <summary>
 /// Registers a single system-wide hotkey (RegisterHotKey/WM_HOTKEY) so Start/Stop can be triggered
-/// from anywhere, even while MouseUtil isn't the active window. WM_HOTKEY is delivered as an
-/// ordinary message to whichever window registered it, so this subclasses the main window's WndProc
-/// (SetWindowLongPtr/GWLP_WNDPROC) to observe that one message and otherwise forwards everything
-/// unchanged to the original WndProc via CallWindowProc - the same technique WPF/Win32 apps use to
-/// hook window messages that WinUI's own event surface doesn't expose.
+/// from anywhere, even while MouseUtil isn't the active window. Subclasses the main window's WndProc
+/// (SetWindowLongPtr/GWLP_WNDPROC) to observe WM_HOTKEY and forwards everything else unchanged via
+/// CallWindowProc.
 ///
-/// This is also, pragmatically, the one place in the app that owns a WndProc subclass at all - other
-/// features that need to observe a custom window message (e.g. SingleInstanceService's "show
-/// yourself" message, see RegisterMessageHandler below) register a callback here instead of each
-/// installing their own competing SetWindowLongPtr subclass, which would require carefully chaining
-/// multiple _previousWndProc pointers for no real benefit.
+/// This is the app's one WndProc subclass - other features that need to observe a custom window
+/// message (e.g. SingleInstanceService's "show yourself" message) register a callback here via
+/// RegisterMessageHandler instead of installing a competing subclass.
 /// </summary>
 public sealed class GlobalHotkeyService : IDisposable
 {
-    // Arbitrary id private to this app's hotkey registration - RegisterHotKey scopes ids per-hWnd,
-    // so this only needs to be unique among hotkeys this window itself registers (just the one).
+    // Arbitrary id, unique only among hotkeys this window registers (there's just the one).
     private const int HotkeyId = 0x4573;
 
     private IntPtr _hwnd;
     private IntPtr _previousWndProc;
 
-    // Kept alive for the service's lifetime: Marshal.GetFunctionPointerForDelegate hands the OS a
-    // raw function pointer into this delegate's thunk, which would otherwise be free to move/collect
-    // once WndProc() (a static-ish method reference) stopped being reachable from managed code -
-    // without this field the delegate could be GC'd while native code still holds a pointer to it.
+    // Kept alive for the service's lifetime - without this field the delegate could be GC'd while
+    // native code still holds a raw function pointer into it (via Marshal.GetFunctionPointerForDelegate).
     private NativeMethods.WndProc? _wndProcDelegate;
 
     private bool _isRegistered;
 
-    // Callbacks for arbitrary custom window messages other than WM_HOTKEY (see RegisterMessageHandler)
-    // - keyed by message id so multiple unrelated features can each observe their own message through
-    // this single subclass without stepping on one another. Handlers receive the raw wParam/lParam so
-    // features that need to inspect them (e.g. TrayIconService distinguishing left-click from
-    // right-click on its callback message) can do so; simple parameterless handlers (e.g.
-    // SingleInstanceService's "show yourself" message) use the Action overload below instead.
+    // Callbacks for custom window messages other than WM_HOTKEY, keyed by message id so multiple
+    // features can each observe their own message through this single subclass.
     private readonly Dictionary<uint, Action<IntPtr, IntPtr>> _messageHandlers = new();
 
     /// <summary>Raised on the UI thread (via the subclassed WndProc, already running on it) whenever the registered hotkey is pressed.</summary>
@@ -59,10 +48,8 @@ public sealed class GlobalHotkeyService : IDisposable
 
     /// <summary>
     /// Unregisters any previous hotkey, then attempts to register <paramref name="modifiers"/> +
-    /// <paramref name="virtualKey"/>. Returns whether the new registration actually succeeded
-    /// (RegisterHotKey fails if another app already owns that exact combination) - callers must
-    /// check this and roll back to a previous known-good hotkey on failure, since this always
-    /// unregisters first regardless of outcome.
+    /// <paramref name="virtualKey"/>. Returns whether registration succeeded (RegisterHotKey fails if
+    /// another app already owns that combination) - callers must roll back on failure.
     /// </summary>
     public bool TryRegister(uint modifiers, uint virtualKey)
     {
@@ -77,11 +64,9 @@ public sealed class GlobalHotkeyService : IDisposable
     }
 
     /// <summary>
-    /// Unregisters the current hotkey, if any, without registering a replacement - leaves nothing
-    /// registered until the next TryRegister. Used while the user is capturing a new hotkey in
-    /// Settings: RegisterHotKey normally intercepts its key combination at the OS level and delivers
-    /// WM_HOTKEY instead of a normal keystroke, so without this, pressing the *current* hotkey while
-    /// recording would fire HotkeyPressed instead of reaching HotkeyButton_KeyDown.
+    /// Unregisters the current hotkey, if any, without registering a replacement. Used while the user
+    /// is capturing a new hotkey in Settings - without this, pressing the current hotkey while
+    /// recording would fire HotkeyPressed instead of reaching the key-capture handler.
     /// </summary>
     public void Unregister()
     {
@@ -94,12 +79,8 @@ public sealed class GlobalHotkeyService : IDisposable
 
     /// <summary>
     /// Registers <paramref name="handler"/> to run whenever this window's subclassed WndProc observes
-    /// <paramref name="message"/> - e.g. SingleInstanceService.ShowWindowMessageId, invoked when a
-    /// second launch attempt signals this instance to come to the foreground. Runs on the UI thread,
-    /// same as HotkeyPressed above, since it fires from the same WndProc. Must be called after
-    /// AttachToWindow (there is no message to observe before the subclass is installed), though in
-    /// practice the dictionary lookup itself is harmless either way - only the timing of messages
-    /// actually arriving matters.
+    /// <paramref name="message"/>. Runs on the UI thread, since it fires from the same WndProc. Must
+    /// be called after AttachToWindow.
     /// </summary>
     public void RegisterMessageHandler(uint message, Action handler)
     {

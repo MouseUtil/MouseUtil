@@ -56,15 +56,10 @@ public sealed partial class SettingsPanel : UserControl
     public event EventHandler? AboutExpanderExpanded;
 
     /// <summary>
-    /// Raised whenever one of the 5 non-About SettingsExpander cards (InterfaceExpander,
-    /// IntervalDisplayExpander, StopButtonDisplayExpander, PauseOnMovementExpander,
-    /// AppLaunchBehaviorExpander) is expanded - never on collapse, same as AboutExpanderExpanded -
+    /// Raised whenever one of the 5 non-About SettingsExpander cards is expanded - never on collapse -
     /// passing the expander itself so MainWindow can bring it into view within SettingsScrollViewer.
-    /// SettingsScrollViewer lives in MainWindow.xaml, not in this UserControl, so this can't be done
-    /// locally either - see AboutExpanderExpanded's own comment for the same reasoning. Kept as a
-    /// separate event from AboutExpanderExpanded rather than folded into it since AboutExpander's own
-    /// scroll-to-bottom behavior is unconditional, while these 5 just ask the framework to reveal
-    /// them (see MainWindow.ScrollExpanderIntoView) - a different, narrower request.
+    /// Kept separate from AboutExpanderExpanded since AboutExpander's scroll-to-bottom is
+    /// unconditional, while these 5 just ask the framework to reveal them.
     /// </summary>
     public event EventHandler<FrameworkElement>? SettingsExpanderExpanded;
 
@@ -96,16 +91,19 @@ public sealed partial class SettingsPanel : UserControl
     public bool ShowAdvancedIntervalDisplay => IntervalDisplayAdvancedRadioButton.IsChecked == true;
 
     public bool RunAutomationOnLaunch => RunAutomationOnLaunchToggle.IsOn;
-    public bool RandomizeIntervalOnLaunch => RandomizeIntervalOnLaunchToggle.IsOn;
 
     /// <summary>"LastUsed", "Click", or "Jiggle" - see AppConfig.PreferredMode's own comment. Backed by a plain field (rather than read back from PreferredModeDropDownButton) since DropDownButton/MenuFlyoutItem have no built-in "currently selected item" concept the way ComboBox does.</summary>
     public string PreferredMode => _preferredMode;
+
+    /// <summary>"Normal", "Minimized", or "Tray" - see AppConfig.LaunchWindowMode's own comment. Same backing-field reasoning as _preferredMode above.</summary>
+    public string LaunchWindowMode => _launchWindowMode;
 
     private bool _isInitializing;
     private uint _hotkeyModifiers;
     private uint _hotkeyKey;
     private bool _isRecordingHotkey;
     private string _preferredMode = "LastUsed";
+    private string _launchWindowMode = "Normal";
 
     /// <summary>Backing fields for ThemeDropDownButton/BackdropDropDownButton - same reasoning as _preferredMode's own comment (DropDownButton/MenuFlyoutItem have no built-in "currently selected item" concept).</summary>
     private string _theme = "System";
@@ -171,10 +169,13 @@ public sealed partial class SettingsPanel : UserControl
         ShowTaskbarProgressToggle.IsOn = config.ShowTaskbarProgress;
 
         RunAutomationOnLaunchToggle.IsOn = config.RunAutomationOnLaunch;
-        RandomizeIntervalOnLaunchToggle.IsOn = config.RandomizeIntervalOnLaunch;
 
         _preferredMode = config.PreferredMode;
         PreferredModeDropDownButton.Content = FormatPreferredMode(_preferredMode);
+
+        _launchWindowMode = config.LaunchWindowMode;
+        LaunchWindowDropDownButton.Content = FormatLaunchWindowMode(_launchWindowMode);
+        LaunchWindowTrayItem.IsEnabled = CloseToTrayToggle.IsOn;
 
         (config.ShowAdvancedIntervalDisplay ? IntervalDisplayAdvancedRadioButton : IntervalDisplayBasicRadioButton).IsChecked = true;
         UpdateIntervalDisplayExpanderDescription();
@@ -221,9 +222,7 @@ public sealed partial class SettingsPanel : UserControl
 
     /// <summary>
     /// Sets InterfaceExpander's collapsed Description to both current selections. HeaderIcon is NOT
-    /// touched here - it stays at its plain XAML-declared static glyph regardless of which Theme/
-    /// Backdrop option is selected (a deliberate choice - the icon does not track Theme the way it
-    /// used to under the old, now-removed ThemeExpander).
+    /// touched here - it stays at its plain static glyph regardless of which Theme/Backdrop is selected.
     /// </summary>
     private void UpdateInterfaceExpanderHeader() =>
         InterfaceExpander.Description = $"{FormatTheme(_theme)}, {FormatBackdrop(_backdrop)}";
@@ -234,10 +233,8 @@ public sealed partial class SettingsPanel : UserControl
             : "Minutes and Seconds";
 
     /// <summary>
-    /// Mirrors UpdateStopButtonDisplayExpanderDescription's style for PauseOnMovementExpander: "Off"
-    /// while the master toggle is off, otherwise which of "Auto click"/"Jiggle" the two sub-toggles
-    /// currently apply to (comma-joined - both, either alone, or "On" if the master is on but neither
-    /// sub-toggle is, which is a valid - if inert - combination rather than one this needs to prevent).
+    /// "Off" while the master toggle is off, otherwise which of "Auto click"/"Jiggle" the two
+    /// sub-toggles apply to (comma-joined), or "On" if the master is on but neither sub-toggle is.
     /// </summary>
     private void UpdatePauseOnMovementExpanderDescription()
     {
@@ -269,14 +266,11 @@ public sealed partial class SettingsPanel : UserControl
                 : "Time remaining";
 
     /// <summary>
-    /// Called immediately by MainWindow's SettingsBackButton_Click when the Settings overlay starts
-    /// closing (before the slide-out animation and ResetAfterClose's own delay below) - cancels any
-    /// in-progress hotkey capture (otherwise _isRecordingHotkey stays stuck true, permanently
-    /// no-opping HotkeyButton_Click) and, since recording leaves the previous hotkey unregistered
-    /// (see HotkeyButton_Click), re-registers it so closing Settings mid-capture never leaves the app
-    /// with no hotkey active. This can't wait for ResetAfterClose's delay like the expanders/error
-    /// banner do - the hotkey has to be re-registered right away, not 300ms into the user having
-    /// already left Settings.
+    /// Called immediately when the Settings overlay starts closing (before the slide-out animation) -
+    /// cancels any in-progress hotkey capture and re-registers the previous hotkey (recording leaves
+    /// it unregistered), so closing Settings mid-capture never leaves the app with no hotkey active.
+    /// Runs right away rather than waiting for ResetAfterClose's delay, since the hotkey must be
+    /// active immediately, not 300ms after the user has already left Settings.
     /// </summary>
     public void HandleHostClosing()
     {
@@ -289,36 +283,19 @@ public sealed partial class SettingsPanel : UserControl
     }
 
     /// <summary>
-    /// Called by MainWindow's SettingsBackButton_Click once the slide-out animation has fully
-    /// finished (300ms after HandleHostClosing above, alongside SettingsScrollViewer's own reset back
-    /// to the top) - resets everything else Settings should always come back to fresh, however the
-    /// user left it: collapses every expandable card, and clears the startup-task error banner (see
-    /// StartWithWindowsToggle_Toggled) rather than leaving a stale error sitting there until the app
-    /// is relaunched. Deliberately delayed rather than run immediately like HandleHostClosing does,
-    /// so none of this is visible mid-slide - not just to hide an animation, but to hide the change
-    /// happening at all (animated or not): the same reasoning applies to why the collapses below are
-    /// forced to be instant rather than left to animate (see the ChildrenTransitions swap), since an
-    /// instant snap done too early would be just as visible mid-slide as an animated one. The expander
-    /// collapse also sidesteps a real gap in SettingsExpander itself (confirmed against the installed
-    /// CommunityToolkit.WinUI.Controls.SettingsControls source): disabling an expander while
-    /// automation is running only blocks its chevron's clicks, it doesn't collapse anything, so one
-    /// left open when automation starts would otherwise stay frozen open with no way for the user to
-    /// collapse it mid-run - closing Settings already guarantees a fresh, collapsed state instead.
+    /// Called once the slide-out animation has fully finished - resets everything Settings should
+    /// always come back to fresh: collapses every expandable card and clears the startup-task error
+    /// banner. Delayed rather than run immediately (unlike HandleHostClosing) so none of this is
+    /// visible mid-slide. The expander collapse also works around a SettingsExpander gap: disabling
+    /// an expander while automation runs blocks its chevron but doesn't collapse it, so this
+    /// guarantees a fresh, collapsed state on next open.
     ///
     /// SettingsRootPanel.ChildrenTransitions is set to null here and stays null - NOT restored at the
-    /// end of this method, unlike a first attempt at this fix that did restore it immediately and
-    /// turned out not to work. The reason: SettingsOverlay is already Collapsed by the time this runs,
-    /// and a Collapsed element is excluded from layout entirely, so the Arrange-time repositioning
-    /// RepositionThemeTransition reacts to does NOT happen now, transition attached or not - it's
-    /// deferred until SettingsOverlay becomes Visible again on the next open, which is the first
-    /// moment layout actually catches up on the IsExpanded changes made here. Restoring
-    /// ChildrenTransitions immediately (right here, before that catch-up ever happens) left it
-    /// re-attached by the time the deferred Arrange finally ran on reopen, so the reflow animated
-    /// anyway, in full view - exactly the bug this is meant to fix. Leaving it null here means it's
-    /// still null when that catch-up Arrange finally happens on reopen (see
-    /// PrepareReflowTransitionsForReopen, called from MainWindow.ShowSettingsOverlay), so that
-    /// specific Arrange pass has nothing to animate; only then is the transition restored, so normal
-    /// interactive expand/collapse keeps animating once Settings is actually open.
+    /// end of this method. SettingsOverlay is Collapsed by the time this runs, so the Arrange-time
+    /// reflow RepositionThemeTransition reacts to is deferred until SettingsOverlay becomes Visible
+    /// again (see PrepareReflowTransitionsForReopen). Restoring the transition here immediately would
+    /// leave it re-attached by then, animating the reflow in full view on reopen - exactly the bug
+    /// this avoids.
     /// </summary>
     public void ResetAfterClose()
     {
@@ -335,16 +312,10 @@ public sealed partial class SettingsPanel : UserControl
     }
 
     /// <summary>
-    /// Called by MainWindow's ShowSettingsOverlay right after SettingsOverlay's Visibility flips back
-    /// to Visible (see that method) - forces the layout pass that catches up on whatever IsExpanded
-    /// changes ResetAfterClose made while collapsed (which SettingsOverlay being Collapsed at the time
-    /// deferred - see ResetAfterClose's own comment) to run right now, synchronously, before
-    /// ChildrenTransitions is restored. Since UpdateLayout() blocks until layout is fully settled, and
-    /// this runs before the slide-in animation's first frame is even composited (it's called
-    /// synchronously right after AnimatePanelTransition kicks that animation off), the catch-up
-    /// reflow finishes with nothing yet on screen to show it happening. Only once that's done is
-    /// ChildrenTransitions restored, so any actual interactive expand/collapse from here on still
-    /// animates normally.
+    /// Called right after SettingsOverlay's Visibility flips back to Visible - forces the deferred
+    /// layout pass (see ResetAfterClose) to run synchronously, before ChildrenTransitions is restored,
+    /// so the catch-up reflow finishes before anything is on screen to show it happening. Only then is
+    /// ChildrenTransitions restored, so interactive expand/collapse keeps animating normally.
     /// </summary>
     public void PrepareReflowTransitionsForReopen()
     {
@@ -363,10 +334,8 @@ public sealed partial class SettingsPanel : UserControl
     {
         HotkeyCard.IsEnabled = enabled;
 
-        // StopButtonDisplayExpander itself (not just its toggle/radio buttons) has to be disabled too,
-        // otherwise its chevron stays clickable and the user can still expand/collapse it while
-        // everything inside is locked - unlike IntervalDisplayExpander below, whose own IsEnabled was
-        // already covering this same case.
+        // StopButtonDisplayExpander itself (not just its toggle/radio buttons) must be disabled too,
+        // otherwise its chevron stays clickable while everything inside is locked.
         StopButtonDisplayExpander.IsEnabled = enabled;
         ShowStopButtonDisplayToggle.IsEnabled = enabled;
         StopButtonDisplayCountdownRadioButton.IsEnabled = enabled && ShowStopButtonDisplayToggle.IsOn;
@@ -374,13 +343,9 @@ public sealed partial class SettingsPanel : UserControl
 
         IntervalDisplayExpander.IsEnabled = enabled;
 
-        // Both the wrapping SettingsExpander (so its own native Disabled visual state dims the Header
-        // text/icon, and its chevron can't be clicked mid-run - same reasoning as
-        // StopButtonDisplayExpander above) AND the master ToggleSwitch itself (so
-        // RefreshToggleSwitchDisabledVisual's own toggle.IsEnabled read below stays accurate) are set
-        // here. The two per-mode sub-toggles use the same combined-gating pattern as
-        // StopButtonDisplayCountdownRadioButton/CounterRadioButton above: locked while automation is
-        // running, AND while the master toggle itself is off.
+        // Both the wrapping SettingsExpander (dims Header/icon, blocks the chevron mid-run) and the
+        // master ToggleSwitch itself are disabled here. The two sub-toggles use the same combined
+        // gating as the RadioButtons above: locked while automation runs, and while the master is off.
         PauseOnMovementExpander.IsEnabled = enabled;
         PauseOnMovementToggle.IsEnabled = enabled;
         PauseOnMovementAutoClickToggle.IsEnabled = enabled && PauseOnMovementToggle.IsOn;
@@ -388,33 +353,20 @@ public sealed partial class SettingsPanel : UserControl
     }
 
     /// <summary>
-    /// Works around a native ToggleSwitch limitation: its default template's "Disabled" CommonState
-    /// (see the installed WinUI SDK's generic.xaml, DefaultToggleSwitchStyle) recolors the Off-track
-    /// via ColorAnimationUsingKeyFrames targeting (Shape.Fill/Stroke).(SolidColorBrush.Color) -
-    /// {ThemeResource ToggleSwitchFillOffDisabled}/StrokeOffDisabled get resolved once, the moment the
-    /// Storyboard runs, and baked as a literal Color onto the brush in place. That's not a live theme
-    /// binding, so a toggle left sitting in Disabled (i.e. locked while automation runs - see
-    /// SetInputsEnabled above) keeps showing whichever theme's gray was baked in whenever it was last
-    /// disabled, even after the app/OS theme actually changes. The On-track side of the same animation
-    /// bakes an accent-based color instead, which happens to look fine regardless of theme (the accent
-    /// color itself doesn't change between Light/Dark) - that's why this only reads as visibly wrong on
-    /// a toggle that's Off while locked, not one that's On.
+    /// Works around a native ToggleSwitch limitation: its default template's "Disabled" state bakes
+    /// {ThemeResource ToggleSwitchFillOffDisabled}/StrokeOffDisabled into a literal Color the moment
+    /// the Storyboard runs, rather than a live theme binding - so a toggle left Disabled keeps
+    /// showing whichever theme's gray was baked in even after the app/OS theme changes. The On-track
+    /// side bakes an accent color instead, which looks fine regardless of theme, so this only matters
+    /// for a toggle that's Off while locked.
     ///
-    /// Re-entering "Disabled" re-runs its Storyboard, re-resolving the ThemeResources against
-    /// whatever theme is current now and re-baking fresh colors - cheaper than reimplementing the
-    /// disabled look with shadowed brushes (the fix DimmableLabel/PowerToggleAlternateButton needed
-    /// elsewhere), since the native template's own Storyboard already does the right thing, it just
-    /// needs to be told to run again. The "Normal" hop first is required: GoToState is a no-op if the
-    /// control is already in the target state, so going straight back to "Disabled" wouldn't restart
-    /// the Storyboard.
+    /// Re-entering "Disabled" re-runs the Storyboard, re-baking fresh colors against the current
+    /// theme. The "Normal" hop first is required since GoToState is a no-op if already in the target
+    /// state.
     ///
-    /// Called from MainWindow's RootGrid.ActualThemeChanged handler - covers both an explicit Theme
-    /// dropdown change and the OS theme changing while "System" is selected, same as
-    /// UpdateModeIndicators/UpdateRandomizeIntervalIndicator's own reason for hooking that event. That
-    /// same handler also calls RefreshToggleSwitchDisabledVisual directly (it's internal, not private,
-    /// for exactly this) for MainWindow's own AutoStopToggle - a native ToggleSwitch outside
-    /// SettingsPanel entirely, but subject to this identical native-template limitation whenever it's
-    /// locked while automation runs (see MainWindow.SetStopControlsEnabled).
+    /// Called from MainWindow's RootGrid.ActualThemeChanged handler, which also calls
+    /// RefreshToggleSwitchDisabledVisual directly for MainWindow's own AutoStopToggle - a native
+    /// ToggleSwitch outside SettingsPanel subject to the same limitation.
     /// </summary>
     public void RefreshDisabledToggleSwitchesTheme()
     {
@@ -451,10 +403,8 @@ public sealed partial class SettingsPanel : UserControl
     /// <summary>
     /// Gates StopButtonDisplayCountdownRadioButton/StopButtonDisplayCounterRadioButton - see
     /// AppConfig.ShowStopButtonDisplay's own comment. Only ever fires while automation isn't running
-    /// (the toggle itself is locked via SetInputsEnabled whenever it is - see
-    /// SetStopControlsEnabled's identical AutoStopToggle_Toggled precedent in MainWindow.xaml.cs for
-    /// why that means this can set the two RadioButtons' IsEnabled from
-    /// ShowStopButtonDisplayToggle.IsOn alone, with no separate "not running" check needed here).
+    /// (the toggle itself is locked via SetInputsEnabled whenever it is), so this can set the two
+    /// RadioButtons' IsEnabled from ShowStopButtonDisplayToggle.IsOn alone.
     /// </summary>
     private void ShowStopButtonDisplayToggle_Toggled(object sender, RoutedEventArgs e)
     {
@@ -486,11 +436,31 @@ public sealed partial class SettingsPanel : UserControl
     }
 
     /// <summary>
+    /// Lets MainWindow push a change to "Interval display" made via the Interval card's own toggle
+    /// back into this panel's RadioButtons, keeping both in sync against
+    /// AppConfig.ShowAdvancedIntervalDisplay. Deliberately does NOT raise
+    /// ShowAdvancedIntervalDisplayChanged - the caller already updated its own state directly, so
+    /// raising it back would be a redundant round-trip.
+    /// </summary>
+    public void SetShowAdvancedIntervalDisplay(bool advanced)
+    {
+        if (ShowAdvancedIntervalDisplay == advanced)
+        {
+            return;
+        }
+
+        _isInitializing = true;
+        (advanced ? IntervalDisplayAdvancedRadioButton : IntervalDisplayBasicRadioButton).IsChecked = true;
+        _isInitializing = false;
+
+        ConfigService.Update(c => c.ShowAdvancedIntervalDisplay = advanced);
+        UpdateIntervalDisplayExpanderDescription();
+    }
+
+    /// <summary>
     /// The master on/off switch. Gates PauseOnMovementAutoClickToggle/PauseOnMovementJiggleToggle -
-    /// mirrors ShowStopButtonDisplayToggle_Toggled's exact pattern for its own two RadioButtons - only
-    /// ever fires while automation isn't running (the toggle itself is locked via SetInputsEnabled
-    /// whenever it is, same as ShowStopButtonDisplayToggle), so this can set the two sub-toggles'
-    /// IsEnabled from PauseOnMovementToggle.IsOn alone, with no separate "not running" check needed here.
+    /// only ever fires while automation isn't running (locked via SetInputsEnabled), so this can set
+    /// the two sub-toggles' IsEnabled from PauseOnMovementToggle.IsOn alone.
     /// </summary>
     private void PauseOnMovementToggle_Toggled(object sender, RoutedEventArgs e)
     {
@@ -534,10 +504,8 @@ public sealed partial class SettingsPanel : UserControl
 
     /// <summary>
     /// Combines the master toggle with whichever per-mode sub-toggle applies to <paramref name="mode"/>
-    /// into the single bool MouseAutomationEngine.Start actually needs - replaces the old plain
-    /// PauseOnMovement property now that the engine itself no longer resolves Jiggle-only scoping
-    /// internally (see MouseAutomationEngine.RunLoopAsync's pauseOnMovementActive). Called from
-    /// MainWindow right where PauseOnMovement used to be read, passing the mode about to start.
+    /// into the single bool MouseAutomationEngine.Start needs. Called from MainWindow with the mode
+    /// about to start.
     /// </summary>
     public bool IsPauseOnMovementActiveForMode(AutomationMode mode)
     {
@@ -554,6 +522,13 @@ public sealed partial class SettingsPanel : UserControl
         };
     }
 
+    /// <summary>
+    /// "System tray" (LaunchWindowTrayItem) only makes sense while this toggle is on - kept in sync
+    /// here, and also set at startup in LoadFromConfig. If "System tray" is currently selected and
+    /// this toggle turns off, auto-reverts "Launch window" back to "Normal" rather than leaving an
+    /// unreachable selection persisted (same pattern as the two mutually-exclusive toggles elsewhere
+    /// in this file).
+    /// </summary>
     private void CloseToTrayToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (_isInitializing)
@@ -563,6 +538,14 @@ public sealed partial class SettingsPanel : UserControl
 
         ConfigService.Update(c => c.CloseToTray = CloseToTrayToggle.IsOn);
         CloseToTrayChanged?.Invoke(this, EventArgs.Empty);
+
+        LaunchWindowTrayItem.IsEnabled = CloseToTrayToggle.IsOn;
+        if (!CloseToTrayToggle.IsOn && _launchWindowMode == "Tray")
+        {
+            _launchWindowMode = "Normal";
+            LaunchWindowDropDownButton.Content = FormatLaunchWindowMode(_launchWindowMode);
+            ConfigService.Update(c => c.LaunchWindowMode = _launchWindowMode);
+        }
     }
 
     private async void StartWithWindowsToggle_Toggled(object sender, RoutedEventArgs e)
@@ -615,21 +598,10 @@ public sealed partial class SettingsPanel : UserControl
         ConfigService.Update(c => c.RunAutomationOnLaunch = RunAutomationOnLaunchToggle.IsOn);
     }
 
-    private void RandomizeIntervalOnLaunchToggle_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (_isInitializing)
-        {
-            return;
-        }
-
-        ConfigService.Update(c => c.RandomizeIntervalOnLaunch = RandomizeIntervalOnLaunchToggle.IsOn);
-    }
-
     /// <summary>
     /// No _isInitializing guard needed here, unlike every RadioButton/ToggleSwitch handler in this
-    /// file: LoadFromConfig sets PreferredModeDropDownButton.Content directly rather than checking a
-    /// MenuFlyoutItem, so unlike RadioButton.IsChecked/ToggleSwitch.IsOn, this Click event only ever
-    /// fires from a real user pick, never as a side effect of loading persisted state.
+    /// file: LoadFromConfig sets Content directly rather than checking a MenuFlyoutItem, so this Click
+    /// event only ever fires from a real user pick.
     /// </summary>
     private void PreferredModeMenuFlyoutItem_Click(object sender, RoutedEventArgs e)
     {
@@ -638,6 +610,17 @@ public sealed partial class SettingsPanel : UserControl
             _preferredMode = mode;
             PreferredModeDropDownButton.Content = FormatPreferredMode(mode);
             ConfigService.Update(c => c.PreferredMode = mode);
+        }
+    }
+
+    /// <summary>No _isInitializing guard needed - same reasoning as PreferredModeMenuFlyoutItem_Click's own doc comment.</summary>
+    private void LaunchWindowMenuFlyoutItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuFlyoutItem { Tag: string mode })
+        {
+            _launchWindowMode = mode;
+            LaunchWindowDropDownButton.Content = FormatLaunchWindowMode(mode);
+            ConfigService.Update(c => c.LaunchWindowMode = mode);
         }
     }
 
@@ -668,16 +651,12 @@ public sealed partial class SettingsPanel : UserControl
     }
 
     /// <summary>
-    /// Enters hotkey-recording mode: the next key HotkeyButton_KeyDown sees (that isn't itself a bare
-    /// modifier) becomes the new global hotkey. Ignored while already recording, so a second click
-    /// mid-capture can't start a redundant/overlapping capture.
+    /// Enters hotkey-recording mode: the next non-modifier key HotkeyButton_KeyDown sees becomes the
+    /// new global hotkey. Ignored while already recording.
     ///
-    /// Also unregisters the current hotkey for the duration of the capture. Otherwise, if the user
-    /// opens the recorder and then presses the *current* hotkey (e.g. out of habit, or because they
-    /// didn't mean to open the recorder and don't know Escape cancels it), RegisterHotKey would
-    /// intercept that keypress at the OS level as WM_HOTKEY instead of delivering it to this button -
-    /// silently triggering Start/Stop while leaving the recorder stuck on "Press a key
-    /// combination…" forever, since HotkeyButton_KeyDown never sees the key at all.
+    /// Also unregisters the current hotkey for the duration of the capture - otherwise pressing the
+    /// current hotkey while recording would intercept it as WM_HOTKEY at the OS level instead of
+    /// delivering it to this button, silently triggering Start/Stop while the recorder stays stuck.
     /// </summary>
     private void HotkeyButton_Click(object sender, RoutedEventArgs e)
     {
@@ -694,13 +673,11 @@ public sealed partial class SettingsPanel : UserControl
 
     /// <summary>
     /// Captures the next key while recording: Escape cancels (reverts the label and re-registers the
-    /// previous hotkey - HotkeyButton_Click unregistered it for the capture - with no save); a bare
-    /// modifier key is ignored so recording keeps waiting for the actual key; any other key finalizes
-    /// the combination together with whatever modifiers are currently held.
+    /// previous hotkey, no save); a bare modifier key is ignored; any other key finalizes the
+    /// combination with whatever modifiers are currently held.
     ///
-    /// On success: registers immediately via TryRegisterHotkey (which unregisters the old one
-    /// first), persists it, and updates the label. On failure (already claimed by another app): rolls
-    /// back to the previous hotkey so the app is never left with nothing registered, and shows an
+    /// On success: registers immediately via TryRegisterHotkey, persists it, and updates the label.
+    /// On failure (already claimed by another app): rolls back to the previous hotkey and shows an
     /// inline error instead of persisting.
     /// </summary>
     private void HotkeyButton_KeyDown(object sender, KeyRoutedEventArgs e)
@@ -820,6 +797,13 @@ public sealed partial class SettingsPanel : UserControl
         "Click" => "Auto click",
         "Jiggle" => "Jiggle",
         _ => "Last used"
+    };
+
+    private static string FormatLaunchWindowMode(string mode) => mode switch
+    {
+        "Minimized" => "Minimized",
+        "Tray" => "System tray",
+        _ => "Normal"
     };
 
     private static string FormatTheme(string theme) => theme switch

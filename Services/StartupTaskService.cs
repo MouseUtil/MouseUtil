@@ -4,11 +4,9 @@ namespace MouseUtil.Services;
 
 /// <summary>
 /// Thin wrapper around the "MouseUtilStartup" <see cref="StartupTask"/> declared in
-/// Package.appxmanifest (windows.startupTask extension), which controls whether the app launches
-/// itself (no automation) at Windows logon.
-/// Deliberately not mirrored into AppConfig/ConfigService - the OS can flip this state on its own
-/// (e.g. the user disables it from Windows Settings > Apps > Startup), so it's the single source of
-/// truth and callers must re-query rather than cache.
+/// Package.appxmanifest, controlling whether the app launches itself at Windows logon.
+/// Not mirrored into AppConfig/ConfigService - the OS can flip this on its own (e.g. from Windows
+/// Settings > Apps > Startup), so it's the single source of truth and callers must re-query, not cache.
 /// </summary>
 internal static class StartupTaskService
 {

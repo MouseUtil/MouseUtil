@@ -15,8 +15,8 @@ or repetitive tasks and keep your PC active during long waits or AFK sessions.
 
 <a href="https://apps.microsoft.com/detail/9NTDCVFVF0SQ?referrer=appbadge&mode=full" target="_blank" rel="noopener noreferrer">
     <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="https://get.microsoft.com/images/en-us%20dark.svg">
-        <img src="https://get.microsoft.com/images/en-us%20light.svg" width="288"/>
+        <source media="(prefers-color-scheme: dark)" srcset="https://get.microsoft.com/images/en-us%20light.svg">
+        <img src="https://get.microsoft.com/images/en-us%20dark.svg" width="288"/>
     </picture>
 </a>
 
@@ -31,7 +31,8 @@ or repetitive tasks and keep your PC active during long waits or AFK sessions.
 ## Features and options
 
 ⏱️ **Configurable interval** between actions, shown as Minutes and Seconds (millisecond precision, 3
-decimal places) or broken out into separate Hours/Minutes/Seconds/Milliseconds fields.
+decimal places) or broken out into separate Hours/Minutes/Seconds/Milliseconds fields, plus up to 6
+customizable one-click presets.
 
 🎲 **Randomized intervals** - optionally enable so each countdown is a random duration instead of a
 fixed one. Your configured interval becomes the cap; the actual wait is drawn between that and a
@@ -40,7 +41,8 @@ small floor (10% of the interval, or 250ms, whichever is larger).
 ✋ **Pause on manual movement** - touching the mouse pauses the countdown instead of fighting you for
 control. Can be turned on independently for Auto click and/or Jiggle.
 
-🛑 **Auto-stop** after a number of clicks/jiggles, or at a specific date and time.
+🛑 **Auto-stop conditions** - after a number of clicks/jiggles, after running for a set duration, or
+at a specific date and time.
 
 ⌨️ **Global hotkey** to start/stop from anywhere (F6 by default).
 

@@ -5,14 +5,11 @@ namespace MouseUtil.Services;
 
 /// <summary>
 /// Wraps ITaskbarList3 to show the running interval countdown as a progress bar overlaid on this
-/// app's taskbar icon - the same mechanism installers use for install progress. Entirely optional/
-/// cosmetic (see AppConfig.ShowTaskbarProgress, default off) - every member no-ops if the COM object
-/// couldn't be created, so a taskbar/shell quirk on some machine never takes the feature (or the app)
-/// down.
+/// app's taskbar icon - the same mechanism installers use. Optional/cosmetic (see
+/// AppConfig.ShowTaskbarProgress); every member no-ops if the COM object couldn't be created.
 ///
-/// Must only be called from the UI thread: the underlying COM object is created single-threaded
-/// (CoCreateInstance under the hood) on whichever thread first touches it, which is always the UI
-/// thread here (MainWindow's constructor).
+/// Must only be called from the UI thread - the underlying COM object is created single-threaded
+/// on whichever thread first touches it (MainWindow's constructor).
 /// </summary>
 public sealed class TaskbarProgressService : IDisposable
 {

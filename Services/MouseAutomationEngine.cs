@@ -18,10 +18,9 @@ public enum StatusKind
     Paused,
 
     /// <summary>
-    /// The one-shot "Starting now" reported synchronously by Start() for Jiggle mode (which has no
-    /// startup grace countdown to report through). Distinct from Starting so MainWindow can apply a
-    /// minimum on-screen hold to just this report, without affecting Click mode's real-time
-    /// "Starting in Xs" countdown (which also uses Starting).
+    /// The one-shot "Jiggling now" reported synchronously by Start() for Jiggle mode (no startup grace
+    /// countdown). Distinct from Starting so MainWindow can apply a minimum on-screen hold to just this
+    /// report, without affecting Click mode's real-time "Starting in Xs" countdown.
     /// </summary>
     JiggleStarting
 }
@@ -41,19 +40,15 @@ public sealed class StatusChangedEventArgs : EventArgs
 
     /// <summary>
     /// How much of the current countdown (startup grace, interval, or paused-resume) is left, from
-    /// 1 (just started/fired) down to 0 (about to fire) - drives MainWindow's taskbar progress bar,
-    /// which drains as the countdown runs out rather than filling up. Null
-    /// when this report doesn't represent movement through a countdown (e.g. "Paused" with no visible
-    /// resume-countdown yet), in which case the taskbar bar's last value is left untouched.
+    /// 1 down to 0 - drives MainWindow's taskbar progress bar, which drains as the countdown runs out.
+    /// Null when this report doesn't represent movement through a countdown, leaving the bar untouched.
     /// </summary>
     public double? Progress { get; }
 
     /// <summary>
-    /// Raw time remaining until the next action fires (or, while paused, until the pause's resume
-    /// countdown completes) - null when this report doesn't carry a live countdown of its own (e.g.
-    /// "Paused" right as movement is detected, or during the sub-StillnessDisplayThreshold stillness
-    /// window). Added alongside the already-formatted Text/Progress so callers that build their own
-    /// display text (MainWindow's Countdown display mode) don't have to re-derive seconds from Progress.
+    /// Raw time remaining until the next action fires (or, while paused, until the resume countdown
+    /// completes) - null when this report carries no live countdown. Added alongside the already-
+    /// formatted Text/Progress so callers building their own display text don't re-derive seconds.
     /// </summary>
     public TimeSpan? Remaining { get; }
 }
@@ -80,17 +75,17 @@ public sealed class MouseAutomationEngine
     private const int TickMilliseconds = 100;
 
     // Randomize-interval bounds (see GetEffectiveInterval): the randomized draw's floor is whichever
-    // is larger, 10% of the configured interval or this absolute minimum - at short configured
-    // intervals, 10% alone could fall below Jiggle mode's own ~192ms blocking JiggleSweep animation
-    // (JiggleSteps * JiggleStepDurationMs), which would mean the "gap" between actions is sometimes
-    // entirely consumed by the animation itself, firing back-to-back with no visible gap at all.
+    // is larger, 10% of the configured interval or this absolute minimum - at short intervals, 10%
+    // alone could fall below Jiggle mode's ~192ms blocking JiggleSweep animation, leaving no visible
+    // gap between actions.
     private const double RandomizeIntervalMinPercent = 0.10;
     private static readonly TimeSpan RandomizeIntervalMinFloor = TimeSpan.FromMilliseconds(250);
 
-    // Below this, the countdown's last "in 0.1s" tick is replaced by "Starting now" / "Clicking
-    // now" / "Jiggling now" instead - see FormatCountdownStatus. Purely a status-text display
-    // choice; never affects when the next action actually fires.
-    private static readonly TimeSpan CountdownLabelThreshold = TimeSpan.FromMilliseconds(TickMilliseconds);
+    // How long the post-action caption ("Clicked"/"Jiggling now"/"Resuming now" - set at each fire
+    // site in RunLoopAsync) is shown before the real countdown for the next action takes over. Measured
+    // off intervalClock, the same clock driving the actual countdown, so this only ever changes
+    // displayed text - it never adds real time between actions.
+    private static readonly TimeSpan PostActionCaptionDuration = TimeSpan.FromMilliseconds(300);
     private const int JiggleRadiusPixels = 6; // ~12px diameter circle
     private const int JiggleSteps = 16;
     private const double JiggleStepDurationMs = 12.0;
@@ -102,15 +97,10 @@ public sealed class MouseAutomationEngine
     private Task? _loopTask;
     private volatile bool _autoMoving;
 
-    // UTC ticks of when this run's very first Click-mode action was injected, or 0 if that hasn't
-    // happened yet. Stamped exactly once per run (see FireAction/Start) - never updated again for
-    // any later action - so MainWindow (WasFirstClickJustInjected) can tell "the very first click
-    // just landed on and toggled off the Start/Stop button" apart from any later self-inflicted
-    // click, which always falls outside FirstClickSelfStopWindow since this timestamp is frozen.
-    // Stamped immediately before injecting the click (not after) so a self-inflicted stop - which
-    // can arrive back on the UI thread essentially instantly - still sees it already set. Behind
-    // Interlocked since it's written from this engine's background loop thread and read from the
-    // UI thread.
+    // UTC ticks of when this run's very first Click-mode action was injected, or 0 if not yet.
+    // Stamped exactly once per run, before injecting the click (not after), so a self-inflicted stop
+    // arriving almost instantly on the UI thread still sees it set. Behind Interlocked since it's
+    // written from this engine's background loop thread and read from the UI thread.
     private long _firstClickInjectedTicks;
 
     public event EventHandler<StatusChangedEventArgs>? StatusChanged;
@@ -119,30 +109,23 @@ public sealed class MouseAutomationEngine
     public event EventHandler? AutoStopped;
 
     /// <summary>
-    /// Raised every time FireAction completes - every action this engine performs is counted by
-    /// subscribers, including the first one fired immediately after the startup grace period (or
-    /// immediately on Start when <see cref="Start"/>'s skipStartupCountdown is true). Fires from this
-    /// engine's background loop thread, same as StatusChanged - callers must marshal to the UI thread
-    /// before touching UI state.
+    /// Raised every time FireAction completes, including the first action fired right after the
+    /// startup grace period (or immediately when <see cref="Start"/>'s skipStartupCountdown is true).
+    /// Fires from this engine's background loop thread - callers must marshal to the UI thread.
     /// </summary>
     public event EventHandler<ActionPerformedEventArgs>? ActionPerformed;
 
     public bool IsRunning { get; private set; }
 
     /// <summary>
-    /// Starts the automation loop. skipStartupCountdown bypasses the usual StartupGracePeriod
-    /// countdown - used when Start is triggered via the global hotkey (see
-    /// MainWindow.HotkeyService_HotkeyPressed), which performs the first action immediately instead
-    /// of waiting, unlike a normal Start-button press. Jiggle mode always skips the countdown
-    /// regardless of this flag - see the needsStartupGrace check in RunLoopAsync.
+    /// Starts the automation loop. skipStartupCountdown bypasses the usual StartupGracePeriod, used
+    /// when Start is triggered via the global hotkey (performs the first action immediately). Jiggle
+    /// mode always skips the countdown regardless of this flag.
     ///
-    /// randomizeInterval, when true, draws a fresh random gap (see GetEffectiveInterval) uniformly
-    /// between a floor and interval (used as-is as the maximum) at the start of every normal cycle,
-    /// instead of firing at a fixed interval every time. This never affects the pause-on-movement
-    /// resume threshold (see pauseOnMovementEnabled below - no longer Jiggle-only, see
-    /// SettingsPanel.IsPauseOnMovementActiveForMode), which always waits for the full configured
-    /// interval regardless of randomizeInterval - that wait needs to stay predictable since it's a
-    /// direct reaction to the user's own mouse movement, not part of the automated cadence.
+    /// randomizeInterval, when true, draws a fresh random gap (see GetEffectiveInterval) at the start
+    /// of every cycle instead of firing at a fixed interval. It never affects the pause-on-movement
+    /// resume threshold (pauseOnMovementEnabled), which always waits the full configured interval since
+    /// that's a direct reaction to the user's own mouse movement, not part of the automated cadence.
     /// </summary>
     public void Start(AutomationMode mode, TimeSpan interval, DateTime? stopAt, int? stopAfterActionCount, bool pauseOnMovementEnabled, bool randomizeInterval, bool skipStartupCountdown = false)
     {
@@ -156,14 +139,14 @@ public sealed class MouseAutomationEngine
             IsRunning = true;
             Interlocked.Exchange(ref _firstClickInjectedTicks, 0);
 
-            // Jiggle mode skips RunStartupGraceAsync (see needsStartupGrace in RunLoopAsync), so
-            // without this, the first status report wouldn't happen until the background task is
-            // scheduled and fires the first jiggle - leaving a brief window where the UI still shows
-            // the previous run's stale "Stopped after N jiggles" text. Reporting synchronously here,
-            // before Task.Run, closes that gap instead of racing it.
+            // Jiggle mode skips RunStartupGraceAsync, so without this the first status report wouldn't
+            // happen until the background task fires the first jiggle, leaving the UI showing stale
+            // text briefly. Reporting synchronously here, before Task.Run, closes that gap - matching
+            // every later jiggle, whose own caption is likewise reported before it fires (see
+            // RunLoopAsync's ReportCaptionForFire), not after.
             if (mode == AutomationMode.Jiggle)
             {
-                ReportStatus("Starting now", StatusKind.JiggleStarting, 1);
+                ReportStatus("Jiggling now", StatusKind.JiggleStarting, 1);
             }
 
             var cts = new CancellationTokenSource();
@@ -188,10 +171,8 @@ public sealed class MouseAutomationEngine
 
     private async Task RunLoopAsync(AutomationMode mode, TimeSpan interval, DateTime? stopAt, int? stopAfterActionCount, bool pauseOnMovementEnabled, bool randomizeInterval, bool skipStartupCountdown, CancellationToken token)
     {
-        // Counts actions fired during this run so far, checked against stopAfterActionCount right
-        // after each FireAction call (as opposed to IsStopTimeReached below, which is checked BEFORE
-        // deciding to fire the next action) - the count can only ever reach its target immediately
-        // after firing the action that reaches it. Returns true if the caller should stop the loop.
+        // Counts actions fired so far, checked against stopAfterActionCount right after each
+        // FireAction call. Returns true if the caller should stop the loop.
         var actionsFired = 0;
         bool FireAndCheckActionCountStop()
         {
@@ -208,10 +189,9 @@ public sealed class MouseAutomationEngine
 
         try
         {
-            // Only Click mode started via the Start button needs the startup grace period - it
-            // exists so that click doesn't get immediately consumed as the first auto-click/stop.
-            // Jiggle mode has no click-to-stop race to guard against, and a hotkey-triggered start
-            // (either mode) assumes the mouse isn't hovering the Start button, so both skip it.
+            // Only Click mode started via the Start button needs the startup grace period, so the
+            // click that started it isn't immediately consumed as the first auto-click/stop. Jiggle
+            // mode and hotkey-triggered starts both skip it.
             var needsStartupGrace = !skipStartupCountdown && mode == AutomationMode.Click;
             if (needsStartupGrace && !await RunStartupGraceAsync(stopAt, token).ConfigureAwait(false))
             {
@@ -223,6 +203,19 @@ public sealed class MouseAutomationEngine
                 return;
             }
 
+            // At or below a 1s configured interval, the countdown text would tick over too fast to
+            // read, so this just shows a plain static verb the whole run instead - no countdown, no
+            // post-action caption either. Based on the configured interval, not effectiveInterval,
+            // which stays fixed for the whole run.
+            var isSubSecondInterval = interval <= TimeSpan.FromSeconds(1);
+            var verb = mode == AutomationMode.Click ? "Clicking" : "Jiggling";
+
+            // The caption shown for PostActionCaptionDuration right after a normal (non-resume) fire.
+            // "Clicked" for Click mode, since a click is instantaneous - there's nothing still
+            // happening to call "now"; "Jiggling now" for Jiggle mode, since its sweep animation is a
+            // real, visible, in-progress event.
+            var normalCaption = mode == AutomationMode.Click ? "Clicked" : "Jiggling now";
+
             // Started before firing, not after, so that Jiggle mode's blocking JiggleSweep animation
             // (~192ms) counts against the first inter-action gap instead of adding invisible extra
             // time on top of it - see the main loop's intervalClock deadline below for the full reasoning.
@@ -230,12 +223,54 @@ public sealed class MouseAutomationEngine
             var pauseClock = Stopwatch.StartNew();
 
             // The actual gap this cycle waits for - equal to interval when randomizeInterval is off,
-            // or a fresh random draw (see GetEffectiveInterval) otherwise. Redrawn every time
-            // intervalClock.Restart() marks the start of a new cycle (both below and in the
-            // pause-resume-then-fire path above), but never touched by the pause-on-movement
-            // stillness threshold itself, which always compares against the raw configured interval -
-            // see Start's own doc comment for why that stays predictable regardless of this setting.
+            // or a fresh random draw (GetEffectiveInterval) otherwise. Redrawn on every
+            // intervalClock.Restart(). Never used for the pause-on-movement stillness threshold, which
+            // always compares against the raw configured interval to stay predictable.
             var effectiveInterval = GetEffectiveInterval(interval, randomizeInterval);
+
+            // The caption TextOrCaption shows for PostActionCaptionDuration after a fire - "Clicked"/
+            // "Jiggling now" after a normal fire, "Resuming now" after a pause-on-movement auto-resume.
+            // Only ever changed by ReportCaptionForFire below, which sets and reports it together, so
+            // there's a single place that decides "what just fired" instead of a separately-mutated
+            // field callers have to keep in sync by hand. This initial value covers the very first
+            // fire, before the while loop, which never calls ReportCaptionForFire itself - Click mode's
+            // first "Clicked" already falls out of TextOrCaption's own check below (a click is instant,
+            // so intervalClock.Elapsed is still ~0 on the first tick), and Jiggle mode's first "Jiggling
+            // now" is Start()'s own separate one-shot StatusKind.JiggleStarting report.
+            var currentCaption = normalCaption;
+
+            // Below PostActionCaptionDuration since the last fire, returns currentCaption instead of
+            // countdownText. Reads intervalClock directly rather than taking a snapshot, so it's purely
+            // a display overlay on the already-running countdown clock - it never adds time between
+            // actions (unlike a naive Task.Delay-based hold would).
+            string TextOrCaption(string countdownText)
+            {
+                if (isSubSecondInterval)
+                {
+                    return verb;
+                }
+
+                return intervalClock.Elapsed < PostActionCaptionDuration ? currentCaption : countdownText;
+            }
+
+            // Sets and immediately reports caption for this fire, before FireAndCheckActionCountStop()
+            // potentially blocks for Jiggle mode's ~192ms sweep animation. Nothing else reports status
+            // during that block, so this is what stays on screen for its whole duration -
+            // TextOrCaption's own intervalClock.Elapsed check then covers whatever's left of
+            // PostActionCaptionDuration once the fire call returns. Skipped for sub-second intervals,
+            // which never show a caption at all.
+            void ReportCaptionForFire(string caption)
+            {
+                currentCaption = caption;
+
+                if (isSubSecondInterval)
+                {
+                    return;
+                }
+
+                var firingKind = effectiveInterval <= ImminentThreshold ? StatusKind.Imminent : StatusKind.Running;
+                ReportStatus(caption, firingKind, 1, effectiveInterval);
+            }
 
             if (FireAndCheckActionCountStop())
             {
@@ -258,11 +293,9 @@ public sealed class MouseAutomationEngine
                     return;
                 }
 
-                var verb = mode == AutomationMode.Click ? "Clicking" : "Jiggling";
-
-                // Mode-scoping (Auto click vs Jiggle mode) now happens entirely on the caller side - see
-                // MainWindow's SettingsPanel.IsPauseOnMovementActiveForMode - so pauseOnMovementEnabled
-                // arriving here is already the fully-resolved "should this run pause on movement" bool.
+                // Mode-scoping (Auto click vs Jiggle) happens on the caller side (see
+                // SettingsPanel.IsPauseOnMovementActiveForMode) - pauseOnMovementEnabled arriving here
+                // is already the fully-resolved bool.
                 var pauseOnMovementActive = pauseOnMovementEnabled;
                 var manualMovementDetected = false;
 
@@ -284,31 +317,25 @@ public sealed class MouseAutomationEngine
                         paused = true;
                         pauseClock.Restart();
 
-                        // Reset the taskbar bar to full exactly once, right as pausing begins, then
-                        // freeze it there - every other Paused report below omits progress (null) so it
-                        // stays at that reset value instead of continuing to move while paused. The
-                        // combination (snap to full + yellow + frozen) is what reads as "paused" rather
-                        // than "still counting down".
+                        // Reset the taskbar bar to full once, right as pausing begins, then freeze it -
+                        // every other Paused report below omits progress (null) so it stays there.
                         ReportStatus("Paused", StatusKind.Paused, 1);
                     }
                     else
                     {
-                        // Elapsed-since-pause-started off a monotonic Stopwatch, not a nominal tick
-                        // count, so Task.Delay overshoot below can't make "stood still for a full
-                        // interval" take longer than the actual interval - and unlike DateTime.UtcNow,
-                        // a Stopwatch can't be thrown off by the system clock being adjusted mid-run.
+                        // Elapsed-since-pause off a monotonic Stopwatch rather than DateTime.UtcNow,
+                        // so Task.Delay overshoot and mid-run system clock adjustments can't skew it.
                         var stillness = pauseClock.Elapsed;
 
                         if (stillness >= interval)
                         {
-                            // Stood still for the full interval: fire immediately, as if the timer had gone off,
-                            // then start a fresh full-length countdown - never resume from where it froze.
-                            // Restarted before firing rather than after, so a blocking Jiggle sweep counts
-                            // against the new interval instead of adding on top of it - see the main loop's
-                            // intervalClock deadline below for the full reasoning.
+                            // Stood still for the full interval: fire immediately, then start a fresh
+                            // full-length countdown - never resume from where it froze. Restarted before
+                            // firing so a blocking Jiggle sweep counts against the new interval.
                             paused = false;
                             intervalClock.Restart();
                             effectiveInterval = GetEffectiveInterval(interval, randomizeInterval);
+                            ReportCaptionForFire("Resuming now");
                             if (FireAndCheckActionCountStop())
                             {
                                 return;
@@ -322,7 +349,7 @@ public sealed class MouseAutomationEngine
                         if (stillness >= StillnessDisplayThreshold)
                         {
                             var resumeRemaining = interval - stillness;
-                            ReportStatus(FormatCountdownStatus($"{verb} now", resumeRemaining, $"Paused... Resuming in {FormatSeconds(resumeRemaining, showTenths: false)}"), StatusKind.Paused, remaining: resumeRemaining);
+                            ReportStatus(TextOrCaption($"Resuming in {FormatSeconds(resumeRemaining, showTenths: false)}"), StatusKind.Paused, remaining: resumeRemaining);
                         }
                         else
                         {
@@ -335,12 +362,8 @@ public sealed class MouseAutomationEngine
                 }
 
                 // Deadline measured off a monotonic Stopwatch, not a nominal tick countdown, so
-                // Task.Delay overshoot (Windows timer resolution, ReportStatus/event dispatch time,
-                // etc.) can never compound into drift - each iteration re-derives "how long is left"
-                // from actual elapsed time instead of assuming exactly TickMilliseconds elapsed since
-                // the last one. Stopwatch (rather than DateTime.UtcNow) also means a system clock
-                // adjustment mid-run can't throw this off - it only ever measures elapsed ticks, never
-                // "what time is it".
+                // Task.Delay overshoot can never compound into drift, and a mid-run system clock
+                // adjustment can't throw it off either.
                 var remaining = effectiveInterval - intervalClock.Elapsed;
                 if (remaining < TimeSpan.Zero)
                 {
@@ -349,12 +372,21 @@ public sealed class MouseAutomationEngine
 
                 var kind = remaining <= ImminentThreshold ? StatusKind.Imminent : StatusKind.Running;
                 var progress = remaining.TotalMilliseconds / effectiveInterval.TotalMilliseconds;
-                ReportStatus(FormatCountdownStatus($"{verb} now", remaining, $"{verb} in {FormatSeconds(remaining, showTenths: false)}"), kind, progress, remaining);
+                ReportStatus(TextOrCaption($"{verb} in {FormatSeconds(remaining, showTenths: false)}"), kind, progress, remaining);
 
-                var sleepMs = (int)Math.Min(TickMilliseconds, remaining.TotalMilliseconds);
-                if (sleepMs > 0)
+                if (remaining > TimeSpan.Zero)
                 {
-                    await Task.Delay(sleepMs, token).ConfigureAwait(false);
+                    if (remaining.TotalMilliseconds <= TickMilliseconds)
+                    {
+                        // Last stretch before firing - Task.Delay's own overshoot (bounded by Windows'
+                        // ~15.6ms system timer resolution) would otherwise become the actual fire-time
+                        // error at fast intervals, so only this leg gets the high-resolution wait.
+                        HighResolutionTimer.Wait(remaining, token);
+                    }
+                    else
+                    {
+                        await Task.Delay(TickMilliseconds, token).ConfigureAwait(false);
+                    }
                 }
 
                 if (intervalClock.Elapsed >= effectiveInterval)
@@ -364,18 +396,13 @@ public sealed class MouseAutomationEngine
                         return;
                     }
 
-                    // Restarted before firing, not after: Click mode's action is two sub-millisecond
-                    // SendInput calls, but Jiggle mode's JiggleSweep blocks synchronously for real wall-clock
-                    // time (JiggleSteps * JiggleStepDurationMs, ~192ms) to animate the cursor before
-                    // returning. If the restart happened after the action returned, that ~192ms would
-                    // never be subtracted from anything - it would be pure extra time stacked onto every
-                    // single cycle, on top of the deadline above. Restarting first anchors the Stopwatch's
-                    // zero-point to the moment we decide to fire, so the blocking time counts against the
-                    // *next* interval instead, keeping the gap between fires exactly equal to
-                    // effectiveInterval. Redrawn right alongside the restart - this is the start of a
-                    // brand new cycle, which gets its own fresh random draw.
+                    // Restarted before firing, not after: Jiggle mode's JiggleSweep blocks synchronously
+                    // for ~192ms to animate the cursor. Restarting first anchors the Stopwatch's zero-
+                    // point to the moment we decide to fire, so that blocking time counts against the
+                    // next interval instead of stacking on top of this one.
                     intervalClock.Restart();
                     effectiveInterval = GetEffectiveInterval(interval, randomizeInterval);
+                    ReportCaptionForFire(normalCaption);
 
                     if (FireAndCheckActionCountStop())
                     {
@@ -418,7 +445,7 @@ public sealed class MouseAutomationEngine
             }
 
             var startupProgress = remaining.TotalMilliseconds / StartupGracePeriod.TotalMilliseconds;
-            ReportStatus(FormatCountdownStatus("Starting now", remaining, $"Starting in {FormatSeconds(remaining)}"), StatusKind.Starting, startupProgress, remaining);
+            ReportStatus($"Starting in {FormatSeconds(remaining)}", StatusKind.Starting, startupProgress, remaining);
 
             var sleepMs = (int)Math.Min(TickMilliseconds, remaining.TotalMilliseconds);
             if (sleepMs > 0)
@@ -455,11 +482,10 @@ public sealed class MouseAutomationEngine
 
     /// <summary>
     /// True only if this run's very first Click-mode action was injected within the last
-    /// FirstClickSelfStopWindow - used solely to decide whether to show the "shrug" status text
-    /// (see MainWindow.PowerToggleButton_Unchecked) when that first click happened to land on and
-    /// toggle off the Start/Stop button; never to block or reverse a stop. Because
-    /// _firstClickInjectedTicks is stamped exactly once per run, this can never return true for a
-    /// stop caused by any later action, self-inflicted or otherwise - only the first one.
+    /// FirstClickSelfStopWindow - used solely to decide whether to show the "shrug" status text when
+    /// that first click landed on and toggled off the Start/Stop button; never to block or reverse a
+    /// stop. Since _firstClickInjectedTicks is stamped once per run, this can't return true for any
+    /// later, self-inflicted stop.
     /// </summary>
     public bool WasFirstClickJustInjected()
     {
@@ -513,11 +539,8 @@ public sealed class MouseAutomationEngine
     /// <summary>
     /// Returns <paramref name="interval"/> unchanged when <paramref name="randomize"/> is false.
     /// Otherwise draws a uniformly random value in [floor, interval], where floor is the larger of
-    /// RandomizeIntervalMinPercent of interval or RandomizeIntervalMinFloor - see that constant's own
-    /// comment for why an absolute floor matters even for short configured intervals. If interval
-    /// itself is already at or below that floor, there's no meaningful range left to randomize
-    /// within, so interval is returned as-is rather than risk drawing something larger than what the
-    /// user actually configured.
+    /// RandomizeIntervalMinPercent of interval or RandomizeIntervalMinFloor. If interval is already at
+    /// or below that floor, it's returned as-is rather than risk drawing something larger than configured.
     /// </summary>
     private static TimeSpan GetEffectiveInterval(TimeSpan interval, bool randomize)
     {
@@ -538,15 +561,10 @@ public sealed class MouseAutomationEngine
     }
 
     /// <summary>
-    /// Formats a countdown for status text - plain "Ns"/"N.Ns" under a minute (unchanged from
-    /// before), "Nm Ns" from a minute up to an hour, and "Nh Nm Ns" at an hour or beyond, e.g. 90s
-    /// -> "1m 30s", 3900s -> "1h 5m 0s". Purely a display choice - the underlying countdown value
-    /// and its tick rate are untouched, this only changes how it's rendered once it gets long
-    /// enough that reading raw seconds becomes hard to parse at a glance.
-    /// <paramref name="showTenths"/> gates the sub-10s "N.Ns" tenths digit specifically - the
-    /// "Starting in Xs" caller (the only one this is still true for) passes the default true,
-    /// while the Clicking/Jiggling/Resuming callers below all pass false so their under-10s tail
-    /// reads as a plain whole-second countdown instead.
+    /// Formats a countdown for status text - plain "Ns"/"N.Ns" under a minute, "Nm Ns" up to an hour,
+    /// "Nh Nm Ns" beyond, e.g. 90s -> "1m 30s", 3900s -> "1h 5m 0s". <paramref name="showTenths"/>
+    /// gates the sub-10s "N.Ns" tenths digit - only the "Starting in Xs" caller passes true; the
+    /// Clicking/Jiggling/Resuming callers pass false for a plain whole-second countdown.
     /// </summary>
     public static string FormatSeconds(TimeSpan t, bool showTenths = true)
     {
@@ -562,17 +580,6 @@ public sealed class MouseAutomationEngine
         var seconds = wholeSeconds % 60;
 
         return hours > 0 ? $"{hours}h {minutes}m {seconds}s" : $"{minutes}m {seconds}s";
-    }
-
-    /// <summary>
-    /// Once <paramref name="remaining"/> drops to CountdownLabelThreshold (the countdown's final
-    /// "in 0.1s" tick before the next action fires), returns <paramref name="label"/> ("Starting
-    /// now"/"Clicking now"/"Jiggling now") instead of <paramref name="countdownText"/> - purely a
-    /// status-text display choice, never affects timing.
-    /// </summary>
-    public static string FormatCountdownStatus(string label, TimeSpan remaining, string countdownText)
-    {
-        return remaining <= CountdownLabelThreshold ? label : countdownText;
     }
 
     private void ReportStatus(string text, StatusKind kind, double? progress = null, TimeSpan? remaining = null) => StatusChanged?.Invoke(this, new StatusChangedEventArgs(text, kind, progress, remaining));

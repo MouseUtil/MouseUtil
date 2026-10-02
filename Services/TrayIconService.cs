@@ -6,21 +6,15 @@ namespace MouseUtil.Services;
 
 /// <summary>
 /// Manual Shell_NotifyIcon-based system tray icon (no NuGet dependency) - shows/hides a tray icon for
-/// the "Close to system tray" feature (see MainWindow.AppWindow_Closing) and raises
-/// <see cref="ShowRequested"/>/<see cref="ExitRequested"/> for its left-click and context-menu
-/// "Show MouseUtil"/"Exit" actions, plus <see cref="StartRequested"/>/<see cref="StopRequested"/>/
+/// the "Close to system tray" feature, and raises <see cref="ShowRequested"/>/<see cref="ExitRequested"/>
+/// for left-click/context-menu actions, plus <see cref="StartRequested"/>/<see cref="StopRequested"/>/
 /// <see cref="TogglePauseOnMovementRequested"/> for the context menu's Start/Stop/"Pause on movement"
-/// items (see ShowContextMenu). Registers its callback message through <see cref="GlobalHotkeyService"/>'s
-/// existing WndProc subclass (see RegisterMessageHandler) rather than installing a second one, following
-/// the same pattern SingleInstanceService uses.
+/// items. Registers its callback message through <see cref="GlobalHotkeyService"/>'s existing WndProc
+/// subclass rather than installing a second one.
 ///
-/// Also swaps which icon is displayed to reflect the automation's running/paused state, and - while
-/// inactive - the system taskbar's current light/dark theme, via NIM_MODIFY (see UpdateState/
-/// UpdateSystemTheme). "Paused" here means MouseAutomationEngine.StatusKind.Paused (the
-/// pause-on-movement countdown - no longer Jiggle-only, see SettingsPanel.IsPauseOnMovementActiveForMode),
-/// unrelated to AutomationMode.Jiggle itself. The same NIM_MODIFY call also
-/// keeps the tooltip (szTip) in sync with a live "MouseUtil: {mode} - {Active/Paused/Inactive}" string
-/// (see BuildTooltipText).
+/// Also swaps the displayed icon to reflect the automation's running/paused state and, while
+/// inactive, the system taskbar's current light/dark theme (via NIM_MODIFY - see UpdateState/
+/// UpdateSystemTheme), and keeps the tooltip in sync with a live "MouseUtil: {mode} - {state}" string.
 /// </summary>
 public sealed class TrayIconService : IDisposable
 {
@@ -41,13 +35,12 @@ public sealed class TrayIconService : IDisposable
     private IntPtr _hIconInactiveLightTheme;
     private IntPtr _hIconInactiveDarkTheme;
 
-    // Current composite state, tracked so (1) NIM_MODIFY is only called when the resulting icon/tooltip
-    // actually changed, (2) Show() - after the icon was hidden via CloseToTray/NIM_DELETE - can re-add
-    // it with whatever icon/tooltip was last correct instead of defaulting back to a stale one, and (3)
-    // the context menu's Start/Stop item enabling reflects live state without MainWindow having to push
-    // it separately (see ShowContextMenu).
+    // Current composite state, tracked so NIM_MODIFY only fires on an actual change, Show() can
+    // re-add the icon with the last-correct icon/tooltip, and the context menu reflects live state.
     private bool _isRunning;
     private bool _isPaused;
+    private bool _isAutoStopDialogOpen;
+    private bool _isIntervalPresetEditActive;
     private bool _isTaskbarLight;
     private AutomationMode _mode = AutomationMode.Click;
     private IntPtr _currentHIcon;
@@ -70,11 +63,10 @@ public sealed class TrayIconService : IDisposable
 
     /// <summary>
     /// Wires this service up to the main window: preloads all four tray icon variants from Assets\
-    /// (relative to the app's own base directory, since this is an unpackaged, self-contained
-    /// deployment with no ms-appx:/// resolution), reads the current system taskbar theme from the
-    /// registry, and registers WM_TRAYICON/WM_SETTINGCHANGE with <paramref name="messageService"/>'s
-    /// WndProc subclass. Must be called once, before the first Show(). Does not itself show the icon -
-    /// callers decide when based on the persisted CloseToTray setting.
+    /// (relative to the app's own base directory - no ms-appx:/// resolution in this unpackaged,
+    /// self-contained deployment), reads the current taskbar theme from the registry, and registers
+    /// WM_TRAYICON/WM_SETTINGCHANGE. Must be called once, before the first Show(); does not itself
+    /// show the icon.
     /// </summary>
     public void Initialize(IntPtr hwnd, GlobalHotkeyService messageService)
     {
@@ -102,11 +94,8 @@ public sealed class TrayIconService : IDisposable
     }
 
     /// <summary>
-    /// Updates the running/paused/mode portion of the composite tray icon+tooltip state - called from
-    /// PowerToggleButton_Checked/_Unchecked (running flips), Engine_StatusChanged/ApplyEngineStatus
-    /// (paused flips while running), and MainWindow's mode-switch path (mode flips while inactive -
-    /// mode never changes while running). Applies NIM_MODIFY immediately if the icon is currently
-    /// visible and the resulting icon or tooltip actually changed.
+    /// Updates the running/paused/mode portion of the composite tray icon+tooltip state. Applies
+    /// NIM_MODIFY immediately if the icon is currently visible and the icon or tooltip actually changed.
     /// </summary>
     public void UpdateState(bool isRunning, bool isPaused, AutomationMode mode)
     {
@@ -117,9 +106,28 @@ public sealed class TrayIconService : IDisposable
     }
 
     /// <summary>
-    /// Updates the system taskbar theme portion of the composite state (see the registry read in
-    /// Initialize/OnSettingChange). Only re-evaluates the displayed icon while Inactive - the
-    /// Active/Paused icons (app.ico/tray-paused.ico) don't have theme variants.
+    /// Tracks whether MainWindow's Auto Stop configuration dialog is open, so ShowContextMenu can gray
+    /// out "Start Auto Click"/"Start Jiggle" while it's up - starting a run from here would otherwise
+    /// leave that dialog open over an already-running automation.
+    /// </summary>
+    public void SetAutoStopDialogOpen(bool isOpen)
+    {
+        _isAutoStopDialogOpen = isOpen;
+    }
+
+    /// <summary>
+    /// Tracks whether MainWindow has an interval preset being edited/added on the Interval card, so
+    /// ShowContextMenu can gray out "Start Auto Click"/"Start Jiggle" while it's active - starting a run
+    /// from here would otherwise silently abandon the in-progress edit.
+    /// </summary>
+    public void SetIntervalPresetEditActive(bool isActive)
+    {
+        _isIntervalPresetEditActive = isActive;
+    }
+
+    /// <summary>
+    /// Updates the system taskbar theme portion of the composite state. Only re-evaluates the
+    /// displayed icon while Inactive - the Active/Paused icons don't have theme variants.
     /// </summary>
     public void UpdateSystemTheme(bool isTaskbarLight)
     {
@@ -273,20 +281,15 @@ public sealed class TrayIconService : IDisposable
     }
 
     /// <summary>
-    /// Builds and shows the right-click popup menu at the current cursor position, blocking (this runs
-    /// synchronously on the UI thread, same as any Win32 tray icon's context menu) until the user picks
-    /// an item or dismisses it. SetForegroundWindow before, and the WM_NULL nudge after, are the
-    /// standard documented workaround for TrackPopupMenu otherwise failing to dismiss itself when the
-    /// user clicks away while this process isn't already the foreground app.
+    /// Builds and shows the right-click popup menu at the current cursor position, blocking (runs
+    /// synchronously on the UI thread) until the user picks an item or dismisses it.
+    /// SetForegroundWindow before, and the WM_NULL nudge after, are the standard workaround for
+    /// TrackPopupMenu otherwise failing to dismiss itself when this process isn't already foreground.
     ///
-    /// Rebuilt from scratch every time it's shown, so "Start Auto Click"/"Start Jiggle"/"Stop"
-    /// enabled-vs-grayed and "Pause on movement" checked/grayed always reflect state as of
-    /// this exact click - _isRunning (kept current by UpdateState) and a fresh ConfigService.Load()
-    /// read (the actual source of truth PauseOnMovementToggle itself writes through - see
-    /// MainWindow.PauseOnMovementToggle_Toggled) rather than anything cached from an earlier show.
-    /// Start/Stop are the simple "enabled only in the applicable running state" rule described in the
-    /// feature spec - not a live mode-switch affordance, so which mode happens to be selected in the
-    /// main window UI doesn't affect either Start item's enabled state.
+    /// Rebuilt from scratch every time it's shown, so enabled/grayed/checked states always reflect
+    /// current state - including a fresh ConfigService.Load() read for "Pause on movement" rather than
+    /// anything cached. Both Start items are also grayed while an Auto Stop dialog is open or an
+    /// interval preset is being edited/added, regardless of running state.
     /// </summary>
     private void ShowContextMenu()
     {
@@ -301,7 +304,7 @@ public sealed class TrayIconService : IDisposable
             NativeMethods.AppendMenu(hMenu, NativeMethods.MF_STRING, (IntPtr)MenuCommandShow, "Show MouseUtil");
             NativeMethods.AppendMenu(hMenu, NativeMethods.MF_SEPARATOR, IntPtr.Zero, string.Empty);
 
-            var startFlags = NativeMethods.MF_STRING | (_isRunning ? NativeMethods.MF_GRAYED : NativeMethods.MF_ENABLED);
+            var startFlags = NativeMethods.MF_STRING | (_isRunning || _isAutoStopDialogOpen || _isIntervalPresetEditActive ? NativeMethods.MF_GRAYED : NativeMethods.MF_ENABLED);
             NativeMethods.AppendMenu(hMenu, startFlags, (IntPtr)MenuCommandStartClick, "Start Auto Click");
             NativeMethods.AppendMenu(hMenu, startFlags, (IntPtr)MenuCommandStartJiggle, "Start Jiggle");
 

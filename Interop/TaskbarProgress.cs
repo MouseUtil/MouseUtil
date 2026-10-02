@@ -4,8 +4,7 @@ namespace MouseUtil.Interop;
 
 /// <summary>
 /// Values for ITaskbarList3.SetProgressState. Windows renders Paused as a solid amber/yellow fill
-/// (and Error as red) with no extra styling needed on our end - that's why the "paused = yellow"
-/// requirement needs no manual coloring, just this flag.
+/// (and Error as red) automatically, with no extra styling needed on our end.
 /// </summary>
 [Flags]
 internal enum TaskbarProgressState : uint
@@ -29,11 +28,9 @@ internal class TaskbarInstance
 }
 
 /// <summary>
-/// Only declares the vtable slots up through SetProgressState (ITaskbarList/ITaskbarList2's members,
-/// then the two ITaskbarList3 members this app actually calls) - COM interop only needs the interface
-/// declared up to the last member it intends to invoke, since slots are resolved by declaration order,
-/// not by name. The remaining ITaskbarList3 members (tab thumbnails, overlay icons, etc.) are simply
-/// never exposed here.
+/// Only declares vtable slots up through SetProgressState - COM interop only needs the interface
+/// declared up to the last member it intends to invoke, since slots are resolved by declaration
+/// order, not by name. Remaining ITaskbarList3 members are simply never exposed here.
 /// </summary>
 [ComImport]
 [Guid("EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF")]
