@@ -2,6 +2,26 @@
 
 All notable changes to MouseUtil are documented in this file.
 
+## [2.2.1]
+
+### Changed
+
+- **"Pause on movement" redesigned around one source of truth.** The Settings master toggle no
+  longer carries its own persisted state - it's now a pure live display of whether either "Auto
+  click" or "Jiggle" is on, and both sub-toggles are independently usable instead of gated behind
+  the master toggle being on first. The tray context menu's "Pause on movement" item is now its own
+  submenu with separately checkable "Auto click"/"Jiggle" entries, plus a "Toggle both ON"/"Toggle
+  both OFF" command (only enabled while the two already agree). Existing configs where the old
+  master toggle was off migrate automatically on first launch, forcing both modes off so upgrading
+  can't silently re-enable pausing.
+
+- **Settings' Back button moved into the title bar** instead of sitting pinned inside the Settings
+  page's own header - "Settings" (the in-page title) now scrolls away with the rest of the content
+  like everything else, reclaiming vertical space in the window. A lightweight "Settings" caption
+  fades into the title bar once that in-page title scrolls out of view.
+
+- Taskbar icon progress bar's Settings card: shortened its description and swapped its icon.
+
 ## [2.2.0]
 
 ### Added

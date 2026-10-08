@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Media.Animation;
 using MouseUtil.Interop;
 using MouseUtil.Services;
 using Windows.ApplicationModel;
+using Windows.Foundation;
 using Windows.System;
 using Windows.UI.Core;
 
@@ -43,7 +44,7 @@ public sealed partial class SettingsPanel : UserControl
     /// <summary>Raised whenever "Show countdown progress on taskbar icon" changes, so MainWindow can refresh its own _showTaskbarProgress mirror and clear the taskbar progress bar if it was just turned off.</summary>
     public event EventHandler? ShowTaskbarProgressChanged;
 
-    /// <summary>Raised whenever "Pause on movement" changes - the master toggle, or either "Auto click"/"Jiggle" sub-toggle (by the user or via TogglePauseOnMovement) - so MainWindow can call ResetStatusToOffIfNotRunning.</summary>
+    /// <summary>Raised whenever "Pause on movement" changes - either "Auto click"/"Jiggle" sub-toggle, by the user, via the master toggle cascading to both, or via TogglePauseOnMovementForMode - so MainWindow can call ResetStatusToOffIfNotRunning.</summary>
     public event EventHandler? PauseOnMovementChanged;
 
     /// <summary>Raised whenever "Stop button display" changes, so MainWindow can refresh PowerToggleButton's live display.</summary>
@@ -98,7 +99,23 @@ public sealed partial class SettingsPanel : UserControl
     /// <summary>"Normal", "Minimized", or "Tray" - see AppConfig.LaunchWindowMode's own comment. Same backing-field reasoning as _preferredMode above.</summary>
     public string LaunchWindowMode => _launchWindowMode;
 
+    /// <summary>
+    /// SettingsPageTitle's own bottom edge, in `relativeTo`'s coordinate space (MainWindow passes its
+    /// SettingsScrollViewer) - lets MainWindow detect when the "Settings" title has scrolled out of
+    /// view without reaching into this UserControl's internals directly. TransformToVisual reflects
+    /// the current scroll offset automatically, so this is accurate on every call with no caching.
+    /// </summary>
+    public double GetPageTitleBottom(UIElement relativeTo) =>
+        SettingsPageTitle.TransformToVisual(relativeTo).TransformPoint(new Point(0, SettingsPageTitle.ActualHeight)).Y;
+
     private bool _isInitializing;
+
+    /// <summary>Set for the duration of PauseOnMovementToggle_Toggled's own cascade to both sub-toggles, so their own Toggled handlers know not to sync the master's display back (it's already correct - the user just set it directly) - see PauseOnMovementToggle_Toggled's own comment.</summary>
+    private bool _isCascadingPauseOnMovementFromMaster;
+
+    /// <summary>Set for the duration of SyncPauseOnMovementMasterToggle's own assignment, so PauseOnMovementToggle_Toggled knows this change is just the master's display catching up to the sub-toggles, not a direct user click to cascade back down - see both methods' own comments.</summary>
+    private bool _isSyncingPauseOnMovementMasterDisplay;
+
     private uint _hotkeyModifiers;
     private uint _hotkeyKey;
     private bool _isRecordingHotkey;
@@ -148,11 +165,9 @@ public sealed partial class SettingsPanel : UserControl
 
         var config = ConfigService.Load();
 
-        PauseOnMovementToggle.IsOn = config.PauseOnMovement;
         PauseOnMovementAutoClickToggle.IsOn = config.PauseOnMovementForAutoClick;
         PauseOnMovementJiggleToggle.IsOn = config.PauseOnMovementForJiggle;
-        PauseOnMovementAutoClickToggle.IsEnabled = config.PauseOnMovement;
-        PauseOnMovementJiggleToggle.IsEnabled = config.PauseOnMovement;
+        PauseOnMovementToggle.IsOn = config.PauseOnMovementForAutoClick || config.PauseOnMovementForJiggle;
         UpdatePauseOnMovementExpanderDescription();
 
         ShowStopButtonDisplayToggle.IsOn = config.ShowStopButtonDisplay;
@@ -233,8 +248,10 @@ public sealed partial class SettingsPanel : UserControl
             : "Minutes and Seconds";
 
     /// <summary>
-    /// "Off" while the master toggle is off, otherwise which of "Auto click"/"Jiggle" the two
-    /// sub-toggles apply to (comma-joined), or "On" if the master is on but neither sub-toggle is.
+    /// "Off" while neither sub-toggle is on, otherwise which of "Auto click"/"Jiggle" apply
+    /// (comma-joined). The master toggle has no independent state of its own (see
+    /// PauseOnMovementToggle_Toggled's own comment), so at least one is always on whenever it reads
+    /// "on" - there's no separate "on but neither mode picked" case left to describe.
     /// </summary>
     private void UpdatePauseOnMovementExpanderDescription()
     {
@@ -255,7 +272,7 @@ public sealed partial class SettingsPanel : UserControl
             modes.Add("Jiggle");
         }
 
-        PauseOnMovementExpander.Description = modes.Count > 0 ? string.Join(", ", modes) : "On";
+        PauseOnMovementExpander.Description = string.Join(", ", modes);
     }
 
     private void UpdateStopButtonDisplayExpanderDescription() =>
@@ -323,8 +340,15 @@ public sealed partial class SettingsPanel : UserControl
         SettingsRootPanel.ChildrenTransitions = _reflowTransitions;
     }
 
-    /// <summary>Flips PauseOnMovementToggle (the master switch) - used by MainWindow's tray "Pause on movement" context menu item so PauseOnMovementToggle_Toggled remains the single place that persists/raises the change.</summary>
-    public void TogglePauseOnMovement() => PauseOnMovementToggle.IsOn = !PauseOnMovementToggle.IsOn;
+    /// <summary>Flips whichever sub-toggle applies to <paramref name="mode"/> - used by MainWindow for the tray context menu's "Pause on movement" submenu items, so the two sub-toggles' own Toggled handlers remain the single place that persists/raises the change.</summary>
+    public void TogglePauseOnMovementForMode(AutomationMode mode)
+    {
+        var toggle = mode == AutomationMode.Jiggle ? PauseOnMovementJiggleToggle : PauseOnMovementAutoClickToggle;
+        toggle.IsOn = !toggle.IsOn;
+    }
+
+    /// <summary>Flips the master toggle - used by MainWindow for the tray context menu's "Toggle both ON"/"Toggle both OFF" item, only reachable there while Auto click/Jiggle already agree, so this cascades both to the opposite shared state via PauseOnMovementToggle_Toggled exactly like a direct Settings click would.</summary>
+    public void ToggleBothPauseOnMovementModes() => PauseOnMovementToggle.IsOn = !PauseOnMovementToggle.IsOn;
 
     /// <summary>
     /// Same set of controls MainWindow.SetInputsEnabled used to poke directly before these rows
@@ -343,13 +367,14 @@ public sealed partial class SettingsPanel : UserControl
 
         IntervalDisplayExpander.IsEnabled = enabled;
 
-        // Both the wrapping SettingsExpander (dims Header/icon, blocks the chevron mid-run) and the
-        // master ToggleSwitch itself are disabled here. The two sub-toggles use the same combined
-        // gating as the RadioButtons above: locked while automation runs, and while the master is off.
+        // The wrapping SettingsExpander (dims Header/icon, blocks the chevron mid-run) and all three
+        // ToggleSwitches are disabled here, all equally - unlike StopButtonDisplay's RadioButtons
+        // above, the two sub-toggles are no longer gated by the master's own on/off (see
+        // PauseOnMovementToggle_Toggled's own comment), only by automation running.
         PauseOnMovementExpander.IsEnabled = enabled;
         PauseOnMovementToggle.IsEnabled = enabled;
-        PauseOnMovementAutoClickToggle.IsEnabled = enabled && PauseOnMovementToggle.IsOn;
-        PauseOnMovementJiggleToggle.IsEnabled = enabled && PauseOnMovementToggle.IsOn;
+        PauseOnMovementAutoClickToggle.IsEnabled = enabled;
+        PauseOnMovementJiggleToggle.IsEnabled = enabled;
     }
 
     /// <summary>
@@ -384,6 +409,9 @@ public sealed partial class SettingsPanel : UserControl
             VisualStateManager.GoToState(toggle, "Disabled", useTransitions: false);
         }
     }
+
+    /// <summary>Pure easter egg, no functional behavior - see SettingsIconSpinStoryboard's own comment for why Begin() alone is safe to call on every click.</summary>
+    private void SettingsIconButton_Click(object sender, RoutedEventArgs e) => SettingsIconSpinStoryboard.Begin();
 
     private void StopButtonDisplayRadioButton_Checked(object sender, RoutedEventArgs e)
     {
@@ -458,25 +486,32 @@ public sealed partial class SettingsPanel : UserControl
     }
 
     /// <summary>
-    /// The master on/off switch. Gates PauseOnMovementAutoClickToggle/PauseOnMovementJiggleToggle -
-    /// only ever fires while automation isn't running (locked via SetInputsEnabled), so this can set
-    /// the two sub-toggles' IsEnabled from PauseOnMovementToggle.IsOn alone.
+    /// The master toggle has no persisted state of its own - see AppConfig.PauseOnMovementForAutoClick/
+    /// PauseOnMovementForJiggle, the only two "Pause on movement" fields that still exist. It's kept in
+    /// sync bidirectionally with the two sub-toggles:
+    ///  - A direct user click here (guarded against re-entry by _isSyncingPauseOnMovementMasterDisplay,
+    ///    set while SyncPauseOnMovementMasterToggle is itself the one assigning IsOn) cascades that same
+    ///    on/off to both sub-toggles, under _isCascadingPauseOnMovementFromMaster so their own handlers
+    ///    below know not to sync the master's display back - it's already correct.
+    ///  - In the other direction, each sub-toggle's own handler calls SyncPauseOnMovementMasterToggle
+    ///    after a change that didn't originate from this cascade, so the master always reads "on" when
+    ///    either sub-toggle is.
+    /// Only ever fires while automation isn't running (locked via SetInputsEnabled).
     /// </summary>
     private void PauseOnMovementToggle_Toggled(object sender, RoutedEventArgs e)
     {
-        if (_isInitializing)
+        if (_isInitializing || _isSyncingPauseOnMovementMasterDisplay)
         {
             return;
         }
 
-        PauseOnMovementAutoClickToggle.IsEnabled = PauseOnMovementToggle.IsOn;
-        PauseOnMovementJiggleToggle.IsEnabled = PauseOnMovementToggle.IsOn;
-        PauseOnMovementChanged?.Invoke(this, EventArgs.Empty);
-        ConfigService.Update(c => c.PauseOnMovement = PauseOnMovementToggle.IsOn);
-        UpdatePauseOnMovementExpanderDescription();
+        _isCascadingPauseOnMovementFromMaster = true;
+        PauseOnMovementAutoClickToggle.IsOn = PauseOnMovementToggle.IsOn;
+        PauseOnMovementJiggleToggle.IsOn = PauseOnMovementToggle.IsOn;
+        _isCascadingPauseOnMovementFromMaster = false;
     }
 
-    /// <summary>Persists whether "Pause on movement" applies to Auto click mode - see AppConfig.PauseOnMovementForAutoClick and IsPauseOnMovementActiveForMode.</summary>
+    /// <summary>Persists whether "Pause on movement" applies to Auto click mode - see AppConfig.PauseOnMovementForAutoClick and IsPauseOnMovementActiveForMode. See PauseOnMovementToggle_Toggled's own comment for the master-sync behavior shared with PauseOnMovementJiggleToggle_Toggled below.</summary>
     private void PauseOnMovementAutoClickToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (_isInitializing)
@@ -485,11 +520,17 @@ public sealed partial class SettingsPanel : UserControl
         }
 
         ConfigService.Update(c => c.PauseOnMovementForAutoClick = PauseOnMovementAutoClickToggle.IsOn);
+
+        if (!_isCascadingPauseOnMovementFromMaster)
+        {
+            SyncPauseOnMovementMasterToggle();
+        }
+
         PauseOnMovementChanged?.Invoke(this, EventArgs.Empty);
         UpdatePauseOnMovementExpanderDescription();
     }
 
-    /// <summary>Persists whether "Pause on movement" applies to Jiggle mode - see AppConfig.PauseOnMovementForJiggle and IsPauseOnMovementActiveForMode.</summary>
+    /// <summary>Persists whether "Pause on movement" applies to Jiggle mode - see AppConfig.PauseOnMovementForJiggle and IsPauseOnMovementActiveForMode. See PauseOnMovementToggle_Toggled's own comment for the master-sync behavior shared with PauseOnMovementAutoClickToggle_Toggled above.</summary>
     private void PauseOnMovementJiggleToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (_isInitializing)
@@ -498,29 +539,36 @@ public sealed partial class SettingsPanel : UserControl
         }
 
         ConfigService.Update(c => c.PauseOnMovementForJiggle = PauseOnMovementJiggleToggle.IsOn);
+
+        if (!_isCascadingPauseOnMovementFromMaster)
+        {
+            SyncPauseOnMovementMasterToggle();
+        }
+
         PauseOnMovementChanged?.Invoke(this, EventArgs.Empty);
         UpdatePauseOnMovementExpanderDescription();
     }
 
-    /// <summary>
-    /// Combines the master toggle with whichever per-mode sub-toggle applies to <paramref name="mode"/>
-    /// into the single bool MouseAutomationEngine.Start needs. Called from MainWindow with the mode
-    /// about to start.
-    /// </summary>
-    public bool IsPauseOnMovementActiveForMode(AutomationMode mode)
+    /// <summary>Sets the master toggle's display to match the two sub-toggles' current OR, guarded so this assignment can't re-enter PauseOnMovementToggle_Toggled's own cascade - see its own comment.</summary>
+    private void SyncPauseOnMovementMasterToggle()
     {
-        if (!PauseOnMovementToggle.IsOn)
-        {
-            return false;
-        }
-
-        return mode switch
-        {
-            AutomationMode.Click => PauseOnMovementAutoClickToggle.IsOn,
-            AutomationMode.Jiggle => PauseOnMovementJiggleToggle.IsOn,
-            _ => false
-        };
+        _isSyncingPauseOnMovementMasterDisplay = true;
+        PauseOnMovementToggle.IsOn = PauseOnMovementAutoClickToggle.IsOn || PauseOnMovementJiggleToggle.IsOn;
+        _isSyncingPauseOnMovementMasterDisplay = false;
     }
+
+    /// <summary>
+    /// Which per-mode sub-toggle applies to <paramref name="mode"/> - the single bool
+    /// MouseAutomationEngine.Start needs. Called from MainWindow with the mode about to start. No
+    /// master-toggle check needed - see PauseOnMovementToggle_Toggled's own comment for why it always
+    /// agrees with these two.
+    /// </summary>
+    public bool IsPauseOnMovementActiveForMode(AutomationMode mode) => mode switch
+    {
+        AutomationMode.Click => PauseOnMovementAutoClickToggle.IsOn,
+        AutomationMode.Jiggle => PauseOnMovementJiggleToggle.IsOn,
+        _ => false
+    };
 
     /// <summary>
     /// "System tray" (LaunchWindowTrayItem) only makes sense while this toggle is on - kept in sync

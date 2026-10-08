@@ -18,6 +18,20 @@
              side-by-side regardless of window width. -->
         <x:Double x:Key="SettingsCardWrapThreshold">0</x:Double>
         <x:Double x:Key="SettingsCardWrapNoIconThreshold">0</x:Double>
+
+        <!-- Click easter-egg for SettingsIconButton (SettingsIconButton_Click) - no functional meaning,
+             just a fun spin. Reused across clicks rather than allocated per click: Begin() restarts the
+             Storyboard from 0 even mid-spin, so a rapid second click never stacks rotations. -->
+        <Storyboard x:Name="SettingsIconSpinStoryboard">
+            <DoubleAnimation
+                Storyboard.TargetName="SettingsIconRotateTransform"
+                Storyboard.TargetProperty="Angle"
+                From="0" To="360" Duration="0:0:0.5">
+                <DoubleAnimation.EasingFunction>
+                    <QuadraticEase EasingMode="EaseInOut" />
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+        </Storyboard>
     </UserControl.Resources>
 
     <!-- Hosted once inside MainWindow's SettingsOverlay - a single instance, never duplicated. Rows
@@ -40,6 +54,67 @@
                 <RepositionThemeTransition IsStaggeringEnabled="False" />
             </TransitionCollection>
         </StackPanel.ChildrenTransitions>
+
+        <!-- Page title - scrolls away with everything else below instead of staying pinned, reclaiming
+             vertical space in this small window. Back (previously pinned alongside this title) now
+             lives permanently in MainWindow's own titlebar instead (TitleBarBackButton), so there's
+             nothing to keep in sync with here. x:Name'd so MainWindow can locate it (GetPageTitleBottom
+             below) to show its own lightweight "Settings" titlebar caption once this has scrolled out
+             of view - see TitleBarSettingsCaption in MainWindow.xaml.
+
+             SettingsPageTitle stays a direct, intact TextBlock (GetPageTitleBottom reads its own
+             ActualHeight) - the gear icon sits beside it in this wrapping StackPanel instead of
+             inside it. -->
+        <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,16">
+            <!-- Pure easter egg: click spins it 360 degrees (SettingsIconButton_Click) - no functional
+                 behavior tied to it. Brush overrides below suppress the default Button template's
+                 PointerOver/Pressed background, border, and foreground dimming, so this reads as a
+                 plain icon rather than a button. -->
+            <Button
+                x:Name="SettingsIconButton"
+                Background="Transparent"
+                BorderThickness="0"
+                Padding="4"
+                CornerRadius="4"
+                VerticalAlignment="Center"
+                Click="SettingsIconButton_Click"
+                AutomationProperties.AutomationId="SettingsIconButton"
+                AutomationProperties.Name="Settings icon">
+                <Button.Resources>
+                    <ResourceDictionary>
+                        <!-- Nested under ThemeDictionaries, not a flat key: ButtonForegroundPressed must
+                             re-select its Light/Dark branch on a live theme switch (RootGrid.RequestedTheme,
+                             no restart) the same way TextFillColorPrimaryBrush itself does. A flat
+                             StaticResource/ThemeResource alias here only resolves once (or falls back to
+                             the SDK's own dim default on re-theme), which is how this went stale/dim before. -->
+                        <ResourceDictionary.ThemeDictionaries>
+                            <ResourceDictionary x:Key="Light">
+                                <StaticResource x:Key="ButtonForegroundPressed" ResourceKey="TextFillColorPrimaryBrush" />
+                            </ResourceDictionary>
+                            <ResourceDictionary x:Key="Dark">
+                                <StaticResource x:Key="ButtonForegroundPressed" ResourceKey="TextFillColorPrimaryBrush" />
+                            </ResourceDictionary>
+                        </ResourceDictionary.ThemeDictionaries>
+                        <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="Transparent" />
+                        <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="Transparent" />
+                        <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="Transparent" />
+                        <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="Transparent" />
+                    </ResourceDictionary>
+                </Button.Resources>
+                <FontIcon
+                    x:Name="SettingsIcon"
+                    Glyph="&#xE713;"
+                    FontSize="16"
+                    RenderTransformOrigin="0.5,0.5"
+                    AutomationProperties.AccessibilityView="Raw">
+                    <FontIcon.RenderTransform>
+                        <RotateTransform x:Name="SettingsIconRotateTransform" />
+                    </FontIcon.RenderTransform>
+                </FontIcon>
+            </Button>
+
+            <TextBlock x:Name="SettingsPageTitle" Text="Settings" Style="{StaticResource BodyLargeStrongTextBlockStyle}" VerticalAlignment="Center" />
+        </StackPanel>
 
         <!-- Display -->
         <TextBlock Text="Display" Style="{StaticResource SectionHeaderTextBlockStyle}" Margin="0,0,0,4" />
@@ -206,10 +281,10 @@
         <settings:SettingsCard
             x:Name="ShowTaskbarProgressCard"
             Header="Taskbar icon progress bar"
-            Description="Mirrors the countdown and turns amber while paused"
+            Description="Counts down; amber while paused"
             AutomationProperties.AutomationId="ShowTaskbarProgressCard">
             <settings:SettingsCard.HeaderIcon>
-                <FontIcon Glyph="&#xE9F5;" />
+                <FontIcon Glyph="&#xE75B;" />
             </settings:SettingsCard.HeaderIcon>
             <ToggleSwitch
                 x:Name="ShowTaskbarProgressToggle"
@@ -255,11 +330,12 @@
             AutomationProperties.AutomationId="HotkeyErrorTextBlock" />
 
         <!-- Pause on movement: a SettingsExpander whose header-row trailing content IS the master
-             on/off toggle (same pattern as StopButtonDisplayExpander) - see AppConfig.PauseOnMovement
-             and PauseOnMovementForAutoClick/PauseOnMovementForJiggle for the two per-mode sub-toggles
-             below. Unlike StopButtonDisplayExpander's mutually-exclusive RadioButtons, these are
-             independent booleans (both, one, or neither can be on), so each gets its own SettingsCard
-             row rather than one shared card. -->
+             on/off toggle (same pattern as StopButtonDisplayExpander), though unlike that one this
+             toggle has no persisted state of its own - it's a pure display of the two per-mode
+             sub-toggles' OR (see AppConfig.PauseOnMovementForAutoClick/PauseOnMovementForJiggle and
+             SettingsPanel.PauseOnMovementToggle_Toggled). Unlike StopButtonDisplayExpander's
+             mutually-exclusive RadioButtons, these are independent booleans (both, one, or neither can
+             be on), so each gets its own SettingsCard row rather than one shared card. -->
         <settings:SettingsExpander
             x:Name="PauseOnMovementExpander"
             Header="Pause on movement"

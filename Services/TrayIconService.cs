@@ -8,8 +8,8 @@ namespace MouseUtil.Services;
 /// Manual Shell_NotifyIcon-based system tray icon (no NuGet dependency) - shows/hides a tray icon for
 /// the "Close to system tray" feature, and raises <see cref="ShowRequested"/>/<see cref="ExitRequested"/>
 /// for left-click/context-menu actions, plus <see cref="StartRequested"/>/<see cref="StopRequested"/>/
-/// <see cref="TogglePauseOnMovementRequested"/> for the context menu's Start/Stop/"Pause on movement"
-/// items. Registers its callback message through <see cref="GlobalHotkeyService"/>'s existing WndProc
+/// <see cref="TogglePauseOnMovementForModeRequested"/> for the context menu's Start/Stop/"Pause on
+/// movement" items. Registers its callback message through <see cref="GlobalHotkeyService"/>'s existing WndProc
 /// subclass rather than installing a second one.
 ///
 /// Also swaps the displayed icon to reflect the automation's running/paused state and, while
@@ -24,7 +24,9 @@ public sealed class TrayIconService : IDisposable
     private const int MenuCommandStartClick = 3;
     private const int MenuCommandStartJiggle = 4;
     private const int MenuCommandStop = 5;
-    private const int MenuCommandTogglePauseOnMovement = 6;
+    private const int MenuCommandToggleAutoClickPause = 6;
+    private const int MenuCommandToggleJigglePause = 7;
+    private const int MenuCommandToggleBothPause = 8;
 
     private IntPtr _hwnd;
     private bool _isVisible;
@@ -58,8 +60,11 @@ public sealed class TrayIconService : IDisposable
     /// <summary>Raised when the user picks "Stop" from the context menu (only reachable while running - see ShowContextMenu).</summary>
     public event EventHandler? StopRequested;
 
-    /// <summary>Raised when the user picks "Pause on movement" from the context menu (only reachable while inactive - see ShowContextMenu).</summary>
-    public event EventHandler? TogglePauseOnMovementRequested;
+    /// <summary>Raised when the user checks/unchecks "Auto click" or "Jiggle" in the context menu's "Pause on movement" submenu (only reachable while inactive - see ShowContextMenu).</summary>
+    public event EventHandler<AutomationMode>? TogglePauseOnMovementForModeRequested;
+
+    /// <summary>Raised when the user picks "Toggle both ON"/"Toggle both OFF" from the "Pause on movement" submenu (only reachable while inactive and Auto click/Jiggle already agree - see ShowContextMenu).</summary>
+    public event EventHandler? ToggleBothPauseOnMovementModesRequested;
 
     /// <summary>
     /// Wires this service up to the main window: preloads all four tray icon variants from Assets\
@@ -290,6 +295,12 @@ public sealed class TrayIconService : IDisposable
     /// current state - including a fresh ConfigService.Load() read for "Pause on movement" rather than
     /// anything cached. Both Start items are also grayed while an Auto Stop dialog is open or an
     /// interval preset is being edited/added, regardless of running state.
+    ///
+    /// "Pause on movement" is its own submenu with one checkable item per mode (Auto click/Jiggle),
+    /// each read/written independently, plus an uncheckable "Toggle both ON"/"Toggle both OFF" command
+    /// below a separator - only enabled while the two already agree, mirroring Settings' master toggle
+    /// (see SettingsPanel.ToggleBothPauseOnMovementModes's own comment). DestroyMenu(hMenu) below also
+    /// destroys the attached submenu - Win32 tears down a popup menu's children along with it.
     /// </summary>
     private void ShowContextMenu()
     {
@@ -313,11 +324,28 @@ public sealed class TrayIconService : IDisposable
 
             NativeMethods.AppendMenu(hMenu, NativeMethods.MF_SEPARATOR, IntPtr.Zero, string.Empty);
 
-            var pauseOnMovement = ConfigService.Load().PauseOnMovement;
-            var pauseFlags = NativeMethods.MF_STRING
-                | (pauseOnMovement ? NativeMethods.MF_CHECKED : NativeMethods.MF_UNCHECKED)
-                | (_isRunning ? NativeMethods.MF_GRAYED : NativeMethods.MF_ENABLED);
-            NativeMethods.AppendMenu(hMenu, pauseFlags, (IntPtr)MenuCommandTogglePauseOnMovement, "Pause on movement");
+            var config = ConfigService.Load();
+            var pauseItemFlags = NativeMethods.MF_STRING | (_isRunning ? NativeMethods.MF_GRAYED : NativeMethods.MF_ENABLED);
+            var hPauseSubmenu = NativeMethods.CreatePopupMenu();
+            if (hPauseSubmenu != IntPtr.Zero)
+            {
+                NativeMethods.AppendMenu(hPauseSubmenu, pauseItemFlags | (config.PauseOnMovementForAutoClick ? NativeMethods.MF_CHECKED : NativeMethods.MF_UNCHECKED), (IntPtr)MenuCommandToggleAutoClickPause, "Auto click");
+                NativeMethods.AppendMenu(hPauseSubmenu, pauseItemFlags | (config.PauseOnMovementForJiggle ? NativeMethods.MF_CHECKED : NativeMethods.MF_UNCHECKED), (IntPtr)MenuCommandToggleJigglePause, "Jiggle");
+
+                NativeMethods.AppendMenu(hPauseSubmenu, NativeMethods.MF_SEPARATOR, IntPtr.Zero, string.Empty);
+
+                // No checkmark - this is an action, not a state. Only enabled while Auto click/Jiggle
+                // agree (both on or both off), since otherwise there's no single unambiguous "both" to
+                // toggle to - mirrors Settings' master toggle (see SettingsPanel.
+                // ToggleBothPauseOnMovementModes's own comment), just exposed as an explicit command
+                // here instead of a live-synced display.
+                var bothModesAgree = config.PauseOnMovementForAutoClick == config.PauseOnMovementForJiggle;
+                var toggleBothLabel = !bothModesAgree ? "Toggle both" : config.PauseOnMovementForAutoClick ? "Toggle both OFF" : "Toggle both ON";
+                var toggleBothFlags = NativeMethods.MF_STRING | (_isRunning || !bothModesAgree ? NativeMethods.MF_GRAYED : NativeMethods.MF_ENABLED);
+                NativeMethods.AppendMenu(hPauseSubmenu, toggleBothFlags, (IntPtr)MenuCommandToggleBothPause, toggleBothLabel);
+
+                NativeMethods.AppendMenu(hMenu, NativeMethods.MF_POPUP | NativeMethods.MF_STRING | (_isRunning ? NativeMethods.MF_GRAYED : NativeMethods.MF_ENABLED), hPauseSubmenu, "Pause on movement");
+            }
 
             NativeMethods.AppendMenu(hMenu, NativeMethods.MF_SEPARATOR, IntPtr.Zero, string.Empty);
             NativeMethods.AppendMenu(hMenu, NativeMethods.MF_STRING, (IntPtr)MenuCommandExit, "Exit");
@@ -354,9 +382,17 @@ public sealed class TrayIconService : IDisposable
             {
                 StopRequested?.Invoke(this, EventArgs.Empty);
             }
-            else if (command == MenuCommandTogglePauseOnMovement)
+            else if (command == MenuCommandToggleAutoClickPause)
             {
-                TogglePauseOnMovementRequested?.Invoke(this, EventArgs.Empty);
+                TogglePauseOnMovementForModeRequested?.Invoke(this, AutomationMode.Click);
+            }
+            else if (command == MenuCommandToggleJigglePause)
+            {
+                TogglePauseOnMovementForModeRequested?.Invoke(this, AutomationMode.Jiggle);
+            }
+            else if (command == MenuCommandToggleBothPause)
+            {
+                ToggleBothPauseOnMovementModesRequested?.Invoke(this, EventArgs.Empty);
             }
         }
         finally

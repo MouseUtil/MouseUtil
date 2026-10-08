@@ -1,6 +1,7 @@
 ﻿using Microsoft.UI;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Composition.SystemBackdrops;
+using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -298,6 +299,29 @@ public sealed partial class MainWindow : Window
     // Guards ShowSettingsOverlay/SettingsBackButton_Click against re-entry while the slide
     // animation between them (see AnimatePanelTransition) is still running.
     private bool _isSettingsTransitioning;
+
+    // Tracks TitleBarSettingsCaption's current shown/hidden state across SettingsScrollViewer_ViewChanged
+    // calls, so its crossfade only (re)starts on an actual flip.
+    private bool _isTitleBarSettingsCaptionVisible;
+
+    // Reused across every AnimateTitleBarSettingsCaption call instead of allocating a new Storyboard
+    // each time - calling Begin() again on an already-running Storyboard restarts it in place rather
+    // than running two independent animations in parallel, which previously let a stale hide-storyboard's
+    // Completed handler collapse the caption right after a fast scroll-down re-showed it. Built lazily on
+    // first use since TitleBarSettingsCaption isn't guaranteed constructed yet at field-initializer time.
+    private Storyboard? _titleBarSettingsCaptionStoryboard;
+    private DoubleAnimation? _titleBarSettingsCaptionAnimation;
+    private DoubleAnimation? _titleBarSettingsCaptionSlideAnimation;
+
+    // Tracks TitleBarBackButton's current shown/hidden target across AnimateTitleBarIconSwap calls, read
+    // back by _titleBarIconSwapStoryboard's Completed handler - same reused-Storyboard pattern as
+    // _titleBarSettingsCaptionStoryboard/_isTitleBarSettingsCaptionVisible above (see their own comments).
+    private bool _isTitleBarBackButtonVisible;
+    private Storyboard? _titleBarIconSwapStoryboard;
+    private DoubleAnimation? _titleBarIconFadeAnimation;
+    private DoubleAnimation? _titleBarBackButtonFadeAnimation;
+    private DoubleAnimation? _titleBarIconSlideAnimation;
+    private DoubleAnimation? _titleBarBackButtonSlideAnimation;
 
     // Working copies of the values being edited while AutoStopDialog is open. Populated fresh from the
     // committed _stopDateTime/_autoStopCount/_stopDuration/_timeStopTime (or sensible defaults) each
@@ -671,14 +695,15 @@ public sealed partial class MainWindow : Window
         _settingsPanel.SettingsExpanderExpanded += (_, expander) => ScrollExpanderIntoView(expander);
 
         SettingsHost.Children.Add(_settingsPanel);
+        SettingsScrollViewer.ViewChanged += SettingsScrollViewer_ViewChanged;
     }
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e) => ShowSettingsOverlay();
 
     /// <summary>
-    /// Opens the Settings overlay and moves focus onto SettingsBackButton. SettingsButton itself needs
-    /// no explicit hide - it's a child of MainContentGrid, which already goes fully Collapsed once
-    /// Settings is showing.
+    /// Opens the Settings overlay, reveals TitleBarBackButton (permanently in AppTitleBarGrid, shared
+    /// by every page), and moves focus onto it. SettingsButton itself needs no explicit hide - it's a
+    /// child of MainContentGrid, which already goes fully Collapsed once Settings is showing.
     /// _settingsPanel.PrepareReflowTransitionsForReopen() runs after AnimatePanelTransition returns,
     /// once SettingsOverlay.Visibility has already flipped to Visible, so it can catch up on
     /// ResetAfterClose's collapses invisibly instead of animating them into view.
@@ -699,19 +724,29 @@ public sealed partial class MainWindow : Window
         // owned here (not inside AnimatePanelTransition itself), same as _isAutoStopTabTransitioning is
         // owned by AutoStopSegmentedControl_SelectionChanged - the helper is shared by two unrelated
         // transitions, so each guard flag belongs to its own caller.
+        AnimateTitleBarIconSwap(showBackButton: true);
+
+        // Settings always opens scrolled to the top (SettingsBackButton_Click resets it on close), so
+        // SettingsPageTitle is always visible right as this overlay appears - the caption has nothing
+        // to show yet.
+        _isTitleBarSettingsCaptionVisible = false;
+        TitleBarSettingsCaption.Opacity = 0;
+        TitleBarSettingsCaption.Visibility = Visibility.Collapsed;
+
         _isSettingsTransitioning = true;
         AnimatePanelTransition(outgoing: MainContentGrid, incoming: SettingsOverlay, reverse: false,
             onCompleted: () =>
             {
                 _isSettingsTransitioning = false;
-                SettingsBackButton.Focus(FocusState.Programmatic);
+                TitleBarBackButton.Focus(FocusState.Programmatic);
             });
 
         _settingsPanel.PrepareReflowTransitionsForReopen();
     }
 
     /// <summary>
-    /// Reverses ShowSettingsOverlay: slides the overlay back out. UpdateModeIndicators() in
+    /// Reverses ShowSettingsOverlay: slides the overlay back out. TitleBarSettingsCaption is hidden
+    /// instantly rather than fading, so it can't linger into the main view. UpdateModeIndicators() in
     /// onCompleted re-syncs ModeSegmentedControl.SelectedIndex to _isJiggleModeSelected once the
     /// slide-back finishes, guarding against drift. Resets SettingsScrollViewer to the top and calls
     /// _settingsPanel.ResetAfterClose() (collapses every expander, clears the startup-task error
@@ -726,6 +761,15 @@ public sealed partial class MainWindow : Window
 
         _settingsPanel.HandleHostClosing();
 
+        AnimateTitleBarIconSwap(showBackButton: false);
+
+        // Hide instantly rather than leaving it to fade out mid-slide (or linger for the full 300ms
+        // below) - stop any in-flight crossfade first so it can't fight this and snap it back to visible.
+        _titleBarSettingsCaptionStoryboard?.Stop();
+        _isTitleBarSettingsCaptionVisible = false;
+        TitleBarSettingsCaption.Opacity = 0;
+        TitleBarSettingsCaption.Visibility = Visibility.Collapsed;
+
         _isSettingsTransitioning = true;
         AnimatePanelTransition(outgoing: SettingsOverlay, incoming: MainContentGrid, reverse: true,
             onCompleted: () =>
@@ -737,6 +781,179 @@ public sealed partial class MainWindow : Window
         await Task.Delay(300);
         SettingsScrollViewer.ChangeView(null, 0, null, disableAnimation: true);
         _settingsPanel.ResetAfterClose();
+    }
+
+    /// <summary>
+    /// Shows/hides TitleBarSettingsCaption based on whether SettingsPanel's own "Settings" title has
+    /// scrolled out of view - GetPageTitleBottom reflects the live scroll offset via TransformToVisual,
+    /// so comparing its result to 0 (the top edge of SettingsScrollViewer's own viewport) directly
+    /// answers "is the title still at least partly visible". _isTitleBarSettingsCaptionVisible guards
+    /// so AnimateTitleBarSettingsCaption only (re)starts on an actual flip, not on every ViewChanged tick.
+    /// </summary>
+    private void SettingsScrollViewer_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+    {
+        var titleBottom = _settingsPanel.GetPageTitleBottom(SettingsScrollViewer);
+        var scrolledPast = titleBottom <= 0;
+
+        if (scrolledPast == _isTitleBarSettingsCaptionVisible)
+        {
+            return;
+        }
+
+        _isTitleBarSettingsCaptionVisible = scrolledPast;
+        AnimateTitleBarSettingsCaption(scrolledPast);
+    }
+
+    /// <summary>
+    /// Fades TitleBarSettingsCaption in/out while also sliding it vertically by SlideDistance - rising
+    /// into place on show, sinking back down on hide - rather than a plain crossfade, echoing the
+    /// vertical scroll gesture that triggers it (SettingsScrollViewer_ViewChanged). Neither property is
+    /// layout-affecting (Opacity, and Translate via RenderTransform rather than Margin/Height), so both
+    /// animate correctly via a bare Storyboard with no EnableDependentAnimation workaround needed.
+    /// Animates Opacity to 0.8 (not 1.0) on show, matching the resting Opacity this caption is meant to
+    /// read at (secondary next to "MouseUtil"), rather than a separate post-animation Opacity setter.
+    ///
+    /// Reuses one Storyboard/pair of DoubleAnimations (see their field comments) rather than allocating
+    /// new ones per call: re-calling Begin() on the same Storyboard restarts it in place, so a show
+    /// triggered mid-hide (or vice versa) cleanly interrupts the in-flight animation instead of racing
+    /// against it. The Completed handler re-reads _isTitleBarSettingsCaptionVisible at the time it
+    /// fires rather than closing over this call's own `show`, so it only collapses Visibility if that
+    /// is still the latest desired state - a stale completion from an interrupted run never fires at
+    /// all (Storyboard only raises Completed for a run that finished, not one that got restarted).
+    /// </summary>
+    private void AnimateTitleBarSettingsCaption(bool show)
+    {
+        const double SlideDistance = 6;
+
+        TitleBarSettingsCaption.Visibility = Visibility.Visible;
+
+        if (_titleBarSettingsCaptionStoryboard is null)
+        {
+            _titleBarSettingsCaptionAnimation = new DoubleAnimation();
+            Storyboard.SetTarget(_titleBarSettingsCaptionAnimation, TitleBarSettingsCaption);
+            Storyboard.SetTargetProperty(_titleBarSettingsCaptionAnimation, "Opacity");
+
+            _titleBarSettingsCaptionSlideAnimation = new DoubleAnimation();
+            Storyboard.SetTarget(_titleBarSettingsCaptionSlideAnimation, TitleBarSettingsCaptionTranslate);
+            Storyboard.SetTargetProperty(_titleBarSettingsCaptionSlideAnimation, "Y");
+
+            _titleBarSettingsCaptionStoryboard = new Storyboard();
+            _titleBarSettingsCaptionStoryboard.Children.Add(_titleBarSettingsCaptionAnimation);
+            _titleBarSettingsCaptionStoryboard.Children.Add(_titleBarSettingsCaptionSlideAnimation);
+            _titleBarSettingsCaptionStoryboard.Completed += (_, _) =>
+            {
+                if (!_isTitleBarSettingsCaptionVisible)
+                {
+                    TitleBarSettingsCaption.Visibility = Visibility.Collapsed;
+                }
+            };
+        }
+
+        _titleBarSettingsCaptionAnimation!.From = show ? 0.0 : 0.8;
+        _titleBarSettingsCaptionAnimation.To = show ? 0.8 : 0.0;
+
+        _titleBarSettingsCaptionSlideAnimation!.From = show ? SlideDistance : 0;
+        _titleBarSettingsCaptionSlideAnimation.To = show ? 0 : SlideDistance;
+
+        var duration = TimeSpan.FromMilliseconds(show ? 100 : 50);
+        var easing = new QuadraticEase { EasingMode = show ? EasingMode.EaseOut : EasingMode.EaseIn };
+        _titleBarSettingsCaptionAnimation.Duration = duration;
+        _titleBarSettingsCaptionAnimation.EasingFunction = easing;
+        _titleBarSettingsCaptionSlideAnimation.Duration = duration;
+        _titleBarSettingsCaptionSlideAnimation.EasingFunction = easing;
+
+        _titleBarSettingsCaptionStoryboard.Begin();
+    }
+
+    /// <summary>
+    /// Crossfades TitleBarIcon and TitleBarBackButton between each other, each also sliding horizontally
+    /// by SlideDistance - the two slide in opposite directions rather than one following the other out.
+    /// showBackButton=true fades/slides the app icon out to the left and fades/slides the button in from
+    /// the right (entering Settings), false reverses it.
+    ///
+    /// TitleBarBackButton.IsEnabled is dropped to false for the close direction: a mouse click that
+    /// triggers it leaves the button genuinely hovered/pressed for the whole fade (the cursor doesn't
+    /// move just because the button started animating), and disabling it lets Control's own built-in
+    /// visual-state handling for IsEnabledChanged clear that PointerOver/Pressed chrome (and reset its
+    /// internal pointer-tracking) instead of this code fighting the framework's state machine directly.
+    /// Keyboard (Space/Enter) activation never touches PointerOver in the first place, so this only
+    /// matters for a mouse-driven click.
+    ///
+    /// Explicit From/To on every animation (rather than reading each control's current value, as
+    /// AnimateTitleBarSettingsCaption does for Opacity) makes this safe to call again mid-animation,
+    /// restarting cleanly from the intended endpoints instead of wherever the interrupted run happened to
+    /// leave things. Same reused-Storyboard pattern as that method otherwise - see its own comment for why.
+    ///
+    /// UpdateTitleBarBackButtonPassthroughRegion keeps the button's screen rectangle marked as input
+    /// passthrough for as long as it's Visible (both directions - see that method's own comment for why
+    /// this is needed at all), clearing it only once the close direction actually finishes collapsing it.
+    /// </summary>
+    private void AnimateTitleBarIconSwap(bool showBackButton)
+    {
+        const double SlideDistance = 10;
+
+        TitleBarBackButton.Visibility = Visibility.Visible;
+        TitleBarBackButton.IsEnabled = showBackButton;
+        UpdateTitleBarBackButtonPassthroughRegion(active: true);
+
+        if (_titleBarIconSwapStoryboard is null)
+        {
+            _titleBarIconFadeAnimation = new DoubleAnimation();
+            Storyboard.SetTarget(_titleBarIconFadeAnimation, TitleBarIcon);
+            Storyboard.SetTargetProperty(_titleBarIconFadeAnimation, "Opacity");
+
+            _titleBarBackButtonFadeAnimation = new DoubleAnimation();
+            Storyboard.SetTarget(_titleBarBackButtonFadeAnimation, TitleBarBackButton);
+            Storyboard.SetTargetProperty(_titleBarBackButtonFadeAnimation, "Opacity");
+
+            _titleBarIconSlideAnimation = new DoubleAnimation();
+            Storyboard.SetTarget(_titleBarIconSlideAnimation, TitleBarIconTranslate);
+            Storyboard.SetTargetProperty(_titleBarIconSlideAnimation, "X");
+
+            _titleBarBackButtonSlideAnimation = new DoubleAnimation();
+            Storyboard.SetTarget(_titleBarBackButtonSlideAnimation, TitleBarBackButtonTranslate);
+            Storyboard.SetTargetProperty(_titleBarBackButtonSlideAnimation, "X");
+
+            _titleBarIconSwapStoryboard = new Storyboard();
+            _titleBarIconSwapStoryboard.Children.Add(_titleBarIconFadeAnimation);
+            _titleBarIconSwapStoryboard.Children.Add(_titleBarBackButtonFadeAnimation);
+            _titleBarIconSwapStoryboard.Children.Add(_titleBarIconSlideAnimation);
+            _titleBarIconSwapStoryboard.Children.Add(_titleBarBackButtonSlideAnimation);
+            _titleBarIconSwapStoryboard.Completed += (_, _) =>
+            {
+                if (!_isTitleBarBackButtonVisible)
+                {
+                    TitleBarBackButton.Visibility = Visibility.Collapsed;
+                    UpdateTitleBarBackButtonPassthroughRegion(active: false);
+                }
+            };
+        }
+
+        _isTitleBarBackButtonVisible = showBackButton;
+
+        _titleBarIconFadeAnimation!.From = showBackButton ? 1 : 0;
+        _titleBarIconFadeAnimation.To = showBackButton ? 0 : 1;
+        _titleBarBackButtonFadeAnimation!.From = showBackButton ? 0 : 1;
+        _titleBarBackButtonFadeAnimation.To = showBackButton ? 1 : 0;
+
+        _titleBarIconSlideAnimation!.From = showBackButton ? 0 : -SlideDistance;
+        _titleBarIconSlideAnimation.To = showBackButton ? -SlideDistance : 0;
+        _titleBarBackButtonSlideAnimation!.From = showBackButton ? SlideDistance : 0;
+        _titleBarBackButtonSlideAnimation.To = showBackButton ? 0 : SlideDistance;
+
+        var duration = TimeSpan.FromMilliseconds(150);
+        var easing = new QuadraticEase { EasingMode = showBackButton ? EasingMode.EaseOut : EasingMode.EaseIn };
+        foreach (var animation in new[]
+                 {
+                     _titleBarIconFadeAnimation, _titleBarBackButtonFadeAnimation,
+                     _titleBarIconSlideAnimation, _titleBarBackButtonSlideAnimation
+                 })
+        {
+            animation.Duration = duration;
+            animation.EasingFunction = easing;
+        }
+
+        _titleBarIconSwapStoryboard.Begin();
     }
 
     /// <summary>
@@ -873,7 +1090,8 @@ public sealed partial class MainWindow : Window
         _trayIconService.ExitRequested += TrayIconService_ExitRequested;
         _trayIconService.StartRequested += TrayIconService_StartRequested;
         _trayIconService.StopRequested += TrayIconService_StopRequested;
-        _trayIconService.TogglePauseOnMovementRequested += TrayIconService_TogglePauseOnMovementRequested;
+        _trayIconService.TogglePauseOnMovementForModeRequested += TrayIconService_TogglePauseOnMovementForModeRequested;
+        _trayIconService.ToggleBothPauseOnMovementModesRequested += TrayIconService_ToggleBothPauseOnMovementModesRequested;
 
         UpdateTrayIconVisibility();
     }
@@ -920,19 +1138,35 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Handles "Pause on movement" from the tray context menu (only reachable while inactive). Flips
-    /// SettingsPanel's PauseOnMovementToggle itself (via TogglePauseOnMovement) rather than writing to
-    /// AppConfig directly, so SettingsPanel's own Toggled handler stays the single place that persists
-    /// the setting.
+    /// Handles the tray context menu's "Pause on movement" submenu (only reachable while inactive).
+    /// Flips SettingsPanel's own sub-toggle for the mode (via TogglePauseOnMovementForMode) rather than
+    /// writing to AppConfig directly, so SettingsPanel's own Toggled handlers stay the single place
+    /// that persists the setting.
     /// </summary>
-    private void TrayIconService_TogglePauseOnMovementRequested(object? sender, EventArgs e)
+    private void TrayIconService_TogglePauseOnMovementForModeRequested(object? sender, AutomationMode mode)
     {
         if (_engine.IsRunning)
         {
             return;
         }
 
-        _settingsPanel.TogglePauseOnMovement();
+        _settingsPanel.TogglePauseOnMovementForMode(mode);
+    }
+
+    /// <summary>
+    /// Handles the "Pause on movement" submenu's "Toggle both ON"/"Toggle both OFF" command (only
+    /// reachable while inactive and Auto click/Jiggle already agree). Flips SettingsPanel's master
+    /// toggle (via ToggleBothPauseOnMovementModes) rather than writing to AppConfig directly, same
+    /// reasoning as TrayIconService_TogglePauseOnMovementForModeRequested above.
+    /// </summary>
+    private void TrayIconService_ToggleBothPauseOnMovementModesRequested(object? sender, EventArgs e)
+    {
+        if (_engine.IsRunning)
+        {
+            return;
+        }
+
+        _settingsPanel.ToggleBothPauseOnMovementModes();
     }
 
     /// <summary>
@@ -1027,7 +1261,51 @@ public sealed partial class MainWindow : Window
         if (args.DidSizeChange || args.DidPresenterChange)
         {
             DispatcherQueue.TryEnqueue(UpdateTitleBarCaptionSpacer);
+
+            if (TitleBarBackButton.Visibility == Visibility.Visible)
+            {
+                DispatcherQueue.TryEnqueue(() => UpdateTitleBarBackButtonPassthroughRegion(active: true));
+            }
         }
+    }
+
+    /// <summary>
+    /// Marks TitleBarBackButton's screen rectangle as input "passthrough" within the custom title bar, so
+    /// Windows never treats a press-and-drag starting there as a window-move gesture. SetTitleBar
+    /// (AppTitleBarGrid, see constructor) only designates that Grid as draggable; TitleBarBackButton is a
+    /// sibling overlapping part of it, not a descendant, and WinAppSDK's automatic interactive-control
+    /// carve-out from the drag region only applies to descendants of the element passed to SetTitleBar.
+    /// Without this, a plain click on the button still invokes it (a short press/release never crosses
+    /// the OS's drag-move threshold), but a press-and-drag starting on it moves the window exactly like
+    /// dragging any other part of the title bar would. Left/Top/Size mirror TitleBarBackButton's own
+    /// literal XAML values (Margin="2,0,0,0", Width/Height="44", centered in AppTitleBarGrid's 48px row)
+    /// rather than reading them back via TransformToVisual/ActualWidth - those aren't guaranteed valid the
+    /// very first time Visibility flips to Visible, before a layout pass has run.
+    /// </summary>
+    private void UpdateTitleBarBackButtonPassthroughRegion(bool active)
+    {
+        var nonClientSource = InputNonClientPointerSource.GetForWindowId(AppWindow.Id);
+
+        if (!active)
+        {
+            nonClientSource.SetRegionRects(NonClientRegionKind.Passthrough, Array.Empty<RectInt32>());
+            return;
+        }
+
+        var hwnd = Win32Interop.GetWindowFromWindowId(AppWindow.Id);
+        var scale = NativeMethods.GetDpiForWindow(hwnd) / 96.0;
+
+        const double LeftDip = 2;
+        const double TopDip = 2;
+        const double SizeDip = 44;
+
+        var rect = new RectInt32(
+            (int)Math.Round(LeftDip * scale),
+            (int)Math.Round(TopDip * scale),
+            (int)Math.Round(SizeDip * scale),
+            (int)Math.Round(SizeDip * scale));
+
+        nonClientSource.SetRegionRects(NonClientRegionKind.Passthrough, new[] { rect });
     }
 
     /// <summary>

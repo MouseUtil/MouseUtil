@@ -8,10 +8,11 @@ public sealed class AppConfig
     public double IntervalMinutes { get; set; } = 1;
     public double IntervalSeconds { get; set; } = 0;
     public string Theme { get; set; } = "System";
-    public bool PauseOnMovement { get; set; } = true;
 
-    // Per-mode scoping for PauseOnMovement above, which stays the master on/off switch - these two are
-    // only meaningful while it's on. Combined with the master switch in IsPauseOnMovementActiveForMode.
+    // "Pause on movement" has no separate master on/off field - it's considered on for a mode purely
+    // by that mode's own flag here (see SettingsPanel.IsPauseOnMovementActiveForMode). Settings' master
+    // ToggleSwitch is a pure display of "either is on", not independently persisted state - see
+    // SettingsPanel.PauseOnMovementToggle_Toggled's own comment.
     public bool PauseOnMovementForAutoClick { get; set; } = false;
     public bool PauseOnMovementForJiggle { get; set; } = true;
 

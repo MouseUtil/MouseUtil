@@ -172,6 +172,75 @@
                     </Setter.Value>
                 </Setter>
             </Style>
+
+            <!-- Local copy of NavigationBackButtonNormalStyle's chrome (Microsoft.WindowsAppSDK's own
+                 generic.xaml) for TitleBarBackButton below, minus the AnimatedIcon content - an earlier
+                 attempt used the real animated chevron here, but it never visibly animated and wasn't
+                 worth chasing further right now, so this keeps the same transparent-at-rest/
+                 highlighted-on-hover chrome (NavigationView*Background/Foreground brushes, CornerRadius
+                 "4" on RootGrid) with a plain static FontIcon glyph instead. -->
+            <Style x:Key="TitleBarBackButtonLocalStyle" TargetType="Button">
+                <Setter Property="Background" Value="{ThemeResource NavigationViewBackButtonBackground}" />
+                <Setter Property="Foreground" Value="{ThemeResource NavigationViewItemForeground}" />
+                <Setter Property="HorizontalContentAlignment" Value="Center" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+                <Setter Property="UseSystemFocusVisuals" Value="{StaticResource UseSystemFocusVisuals}" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Grid x:Name="RootGrid" Background="{TemplateBinding Background}" CornerRadius="4">
+
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal" />
+
+                                        <VisualState x:Name="PointerOver">
+                                            <Storyboard>
+                                                <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RootGrid" Storyboard.TargetProperty="Background">
+                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource NavigationViewButtonBackgroundPointerOver}" />
+                                                </ObjectAnimationUsingKeyFrames>
+                                                <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Content" Storyboard.TargetProperty="Foreground">
+                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource NavigationViewButtonForegroundPointerOver}" />
+                                                </ObjectAnimationUsingKeyFrames>
+                                            </Storyboard>
+                                        </VisualState>
+
+                                        <VisualState x:Name="Pressed">
+                                            <Storyboard>
+                                                <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RootGrid" Storyboard.TargetProperty="Background">
+                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource NavigationViewButtonBackgroundPressed}" />
+                                                </ObjectAnimationUsingKeyFrames>
+                                                <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Content" Storyboard.TargetProperty="Foreground">
+                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource NavigationViewButtonForegroundPressed}" />
+                                                </ObjectAnimationUsingKeyFrames>
+                                            </Storyboard>
+                                        </VisualState>
+
+                                        <VisualState x:Name="Disabled">
+                                            <Storyboard>
+                                                <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Content" Storyboard.TargetProperty="Foreground">
+                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource NavigationViewButtonForegroundDisabled}" />
+                                                </ObjectAnimationUsingKeyFrames>
+                                            </Storyboard>
+                                        </VisualState>
+
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+
+                                <FontIcon
+                                    x:Name="Content"
+                                    Glyph="&#xE72B;"
+                                    FontSize="12"
+                                    HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                    VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                    AutomationProperties.AccessibilityView="Raw" />
+
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
         </Grid.Resources>
 
         <Grid.RowDefinitions>
@@ -184,12 +253,21 @@
              caption area - is part of the SetTitleBar drag rectangle. Visible inset is achieved with
              this Grid's own Padding instead, which does not shrink its outer (draggable) bounds.
 
-             Column layout is Auto/*/Auto: the title sits in a fixed-to-content (Auto) column anchored
-             from the left edge, and an empty Star filler column absorbs all slack between it and the
-             caption-button spacer. This way, resizing CaptionButtonsSpacerColumn (see
-             UpdateTitleBarCaptionSpacer) only eats into the filler column and never shifts the title
-             horizontally. "MouseUtil" is the only content in this row; Height="48" is the smallest
-             height that leaves it breathing room without clipping. -->
+             Column layout is Auto/*/Auto, structurally UNCHANGED from before TitleBarBackButton ever
+             existed: the title sits in a fixed-to-content (Auto) column anchored from the left edge,
+             and an empty Star filler column absorbs all slack between it and the caption-button
+             spacer. This way, resizing CaptionButtonsSpacerColumn (see UpdateTitleBarCaptionSpacer)
+             only eats into the filler column and never shifts the title horizontally. "MouseUtil" is
+             the only content in this row; Height="48" is the smallest height that leaves it breathing
+             room without clipping.
+
+             TitleBarBackButton (below, after this Grid's closing tag) is deliberately NOT a column of
+             this Grid - two earlier attempts at reserving column space for it (Auto, then a fixed 48)
+             both ended up shifting this Grid's own baseline layout (the Auto version shifted the title
+             only while the button was visible; the fixed version shifted it permanently, even on the
+             plain main screen with the button Collapsed). This Grid's own Padding/columns are back to
+             exactly what they were before any of that work, so the main screen is pixel-identical to
+             before this entire feature existed, in every state. -->
         <Grid x:Name="AppTitleBarGrid" Grid.Row="0" Height="48" Padding="25,0,16,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
@@ -212,20 +290,98 @@
                 <!-- Source resolves through Assets\app-18.scale-*.png (100/125/150/200/400) via MRT
                      Core's scale-qualifier matching, so the title bar icon stays crisp at higher DPI
                      instead of blurring, re-evaluated live if the window moves to a different-scale
-                     monitor. Stretch="Uniform" is a safety net for scale factors with no exact variant. -->
+                     monitor. Stretch="Uniform" is a safety net for scale factors with no exact variant.
+
+                     Faded out (Opacity, not Visibility) alongside TitleBarBackButton's own appearance
+                     while Settings is open (ShowSettingsOverlay/SettingsBackButton_Click), rather than
+                     Collapsed - Collapsing it would free up its 18px + this StackPanel's 16px Spacing,
+                     which would itself shift "MouseUtil" left by that same 34px the moment Settings
+                     opens (a different-but-related version of the same "title moves" bug this is all
+                     trying to avoid). Opacity keeps its layout footprint reserved at all times, so
+                     nothing about this StackPanel's own arithmetic ever changes between states - the
+                     TextBlock below lands at the exact same X whether Settings is open or closed,
+                     automatically, with no coordination needed against whatever TitleBarBackButton
+                     itself is doing. -->
                 <Image
+                    x:Name="TitleBarIcon"
                     Width="18"
                     Height="18"
                     Stretch="Uniform"
                     Source="ms-appx:///Assets/app-18.png"
-                    AutomationProperties.AccessibilityView="Raw" />
+                    AutomationProperties.AccessibilityView="Raw">
+                    <Image.RenderTransform>
+                        <TranslateTransform x:Name="TitleBarIconTranslate" />
+                    </Image.RenderTransform>
+                </Image>
                 <TextBlock
                     VerticalAlignment="Center"
                     Text="MouseUtil"
                     Style="{StaticResource CaptionTextBlockStyle}"
                     FontSize="12" />
+                <!-- Lightweight "you're in Settings, and you've scrolled past its own local title" cue -
+                     shown once SettingsPanel's own "Settings" TextBlock (SettingsPageTitle) scrolls out
+                     of view (see SettingsScrollViewer_ViewChanged in MainWindow.xaml.cs), similar in
+                     spirit to how native Windows apps sometimes surface the current page name in the
+                     titlebar once an in-content title scrolls away. Opacity="0.8" (not 1.0) keeps it
+                     reading as secondary next to "MouseUtil" above. Collapsed by default/reset whenever
+                     Settings closes/reopens, same reasoning as TitleBarBackButton/TitleBarIcon. -->
+                <TextBlock
+                    x:Name="TitleBarSettingsCaption"
+                    VerticalAlignment="Center"
+                    Margin="-12,0,0,0"
+                    Text="Settings"
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    FontSize="12"
+                    Opacity="0"
+                    Visibility="Collapsed">
+                    <TextBlock.RenderTransform>
+                        <TranslateTransform x:Name="TitleBarSettingsCaptionTranslate" />
+                    </TextBlock.RenderTransform>
+                </TextBlock>
             </StackPanel>
         </Grid>
+
+        <!-- Back affordance for the Settings page - lives permanently in the titlebar (shared by every
+             page) rather than pinned inside SettingsOverlay, so it never costs the Settings content its
+             own vertical space. Collapsed by default; ShowSettingsOverlay/SettingsBackButton_Click
+             toggle it alongside the slide transition. TitleBarBackButtonLocalStyle (Grid.Resources
+             above) gives it NavigationBackButtonNormalStyle's transparent-at-rest/highlighted-on-hover
+             chrome - an earlier attempt also gave it Microsoft's real animated chevron content, but that
+             animation never rendered visibly and investigating why wasn't worth it right now, so the
+             icon itself is a plain static FontIcon glyph instead. Collapsed (not just invisible) so it's
+             excluded from layout/tab order while hidden, same reasoning as everywhere else in this app
+             that toggles Visibility rather than Opacity for a fully-inactive state.
+
+             Declared as a sibling of AppTitleBarGrid (same Grid.Row="0", painted on top of it since
+             it's declared after), not a column inside it - see that Grid's own comment for why both
+             column-based attempts regressed the main screen's baseline layout. As a direct RootGrid
+             child instead (RootGrid itself has no Padding), HorizontalAlignment="Left" with a 10px
+             Margin lands it 10px off the window's literal top-left corner (x=0,y=0), with
+             VerticalAlignment="Center" centering it within the 48px titlebar band. Since it never
+             touches AppTitleBarGrid's own Padding/columns at all, "MouseUtil" never has to account
+             for its presence either way - it
+             only ever overlaps TitleBarIcon's own (now-faded, not collapsed - see that Image's own
+             comment) reserved slot, never the title text itself, which starts well clear of this
+             button's footprint. Still a real interactive Button sitting on top of the SetTitleBar drag
+             region, so it's still excluded from dragging on its own bounds - verified empirically (not
+             just assumed) via a real simulated click, not just UIA's InvokePattern. -->
+        <Button
+            x:Name="TitleBarBackButton"
+            Grid.Row="0"
+            Width="40"
+            Height="36"
+            Margin="10,0,0,0"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Center"
+            Style="{StaticResource TitleBarBackButtonLocalStyle}"
+            Visibility="Collapsed"
+            Click="SettingsBackButton_Click"
+            AutomationProperties.AutomationId="TitleBarBackButton"
+            AutomationProperties.Name="Back">
+            <Button.RenderTransform>
+                <TranslateTransform x:Name="TitleBarBackButtonTranslate" />
+            </Button.RenderTransform>
+        </Button>
 
         <!-- Everything below the title bar: padded/inset from the window edges. -->
         <Grid x:Name="MainContentGrid" Grid.Row="1" Padding="24,0,24,24">
@@ -1984,55 +2140,14 @@
             Grid.Row="1"
             Padding="24,0,0,0"
             Visibility="Collapsed">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
+            <!-- The Back button + "Settings" title used to live here as a pinned header row, outside
+                 SettingsScrollViewer, wasting vertical space in an already small window. Back now lives
+                 permanently in the titlebar instead (TitleBarBackButton, AppTitleBarGrid above - shown/
+                 hidden alongside this overlay rather than duplicated here), and "Settings" is just the
+                 first item inside SettingsPanel's own scrollable content (see SettingsPanel.xaml), so
+                 both scroll away/reclaim space like everything else.
 
-            <!-- Top-left Back affordance - icon-only, since the "Settings" page title sits right next
-                 to it. Click reverses ShowSettingsOverlay; it also receives programmatic focus right
-                 after the overlay opens so MinutesBox/SecondsBox can't be left holding keyboard focus
-                 underneath this opaque overlay (NumberBox's Compact spin-button popup renders above
-                 everything otherwise). AutomationProperties.Name keeps "Back" as its accessible name.
-                 A plain Button rather than a HyperlinkButton, since HyperlinkButton forces the hand/link
-                 cursor, which reads as misleading for an in-app Back action. Foreground uses the regular
-                 text color rather than accent, since an accent tint reads as an odd splash of color
-                 next to the page title. -->
-            <!-- Two-column header Grid: icon-only Back button (Auto), "Settings" page title taking the
-                 remaining space ("*"). Right margin on this Grid matches SettingsHost's own right
-                 Margin below, since SettingsOverlay's own Padding omits the right inset. -->
-            <Grid Grid.Row="0" Margin="0,0,24,16">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <!-- Padding="6" grows the button's outer footprint to ~26x26 with a smaller FontSize=12
-                     glyph inside it - a bigger button with a smaller icon. The title's left Margin="4"
-                     compensates for the button's grown width so its on-screen position stays put, and
-                     the button's height stays under the title's own text height so the row doesn't grow. -->
-                <Button
-                    x:Name="SettingsBackButton"
-                    Grid.Column="0"
-                    Padding="6"
-                    VerticalAlignment="Center"
-                    Background="Transparent"
-                    BorderThickness="1"
-                    BorderBrush="Transparent"
-                    Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                    Click="SettingsBackButton_Click"
-                    AutomationProperties.AutomationId="SettingsBackButton"
-                    AutomationProperties.Name="Back">
-                    <FontIcon Glyph="&#xE72B;" FontSize="12" AutomationProperties.AccessibilityView="Raw" />
-                </Button>
-                <TextBlock
-                    Grid.Column="1"
-                    VerticalAlignment="Center"
-                    Margin="4,0,0,0"
-                    Text="Settings"
-                    Style="{StaticResource BodyLargeStrongTextBlockStyle}" />
-            </Grid>
-
-            <!-- SettingsHost's right/bottom Margin is where SettingsOverlay's own removed right/bottom
+                 SettingsHost's right/bottom Margin is where SettingsOverlay's own removed right/bottom
                  Padding moved to: the settings rows stay visually inset from the window's true edges,
                  while the ScrollViewer wrapping this Grid extends all the way to them, so its
                  scrollbar renders flush against the true right edge instead of floating over the content.
@@ -2047,7 +2162,7 @@
                  is local, synchronous, and fixed-size the instant it's realized, so anchoring has
                  nothing legitimate to do here - ScrollExpanderIntoView/AboutExpanderExpanded already
                  own this ScrollViewer's intentional expand-triggered scrolling. -->
-            <ScrollViewer x:Name="SettingsScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" VerticalAnchorRatio="NaN">
+            <ScrollViewer x:Name="SettingsScrollViewer" VerticalScrollBarVisibility="Auto" VerticalAnchorRatio="NaN">
                 <Grid x:Name="SettingsHost" Margin="0,0,24,24" />
             </ScrollViewer>
         </Grid>
