@@ -26,8 +26,6 @@ public partial class App : Application
             return;
         }
 
-        ConfigService.MigrateLegacyPauseOnMovementOff();
-
         _window = new MainWindow();
 
         // Skipped when LaunchWindowMode is "Tray" or "Minimized" (MainWindow's constructor already hid

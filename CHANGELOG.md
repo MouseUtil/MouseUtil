@@ -2,6 +2,13 @@
 
 All notable changes to MouseUtil are documented in this file.
 
+## [2.2.2]
+
+### Removed
+
+- The temporary one-time migration that force-disabled per-mode "Pause on movement" for configs
+  upgrading from 2.2.0.
+
 ## [2.2.1]
 
 ### Changed
