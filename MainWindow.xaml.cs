@@ -12,6 +12,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Text;
+using Microsoft.Windows.AppLifecycle;
 using MouseUtil.Controls;
 using MouseUtil.Interop;
 using MouseUtil.Models;
@@ -693,6 +694,7 @@ public sealed partial class MainWindow : Window
             SettingsScrollViewer.ChangeView(null, SettingsScrollViewer.ScrollableHeight, null);
         };
         _settingsPanel.SettingsExpanderExpanded += (_, expander) => ScrollExpanderIntoView(expander);
+        _settingsPanel.RestoreDefaultsRequested += async (_, _) => await RestartAppAsync();
 
         SettingsHost.Children.Add(_settingsPanel);
         SettingsScrollViewer.ViewChanged += SettingsScrollViewer_ViewChanged;
@@ -936,8 +938,11 @@ public sealed partial class MainWindow : Window
         _titleBarBackButtonFadeAnimation!.From = showBackButton ? 0 : 1;
         _titleBarBackButtonFadeAnimation.To = showBackButton ? 1 : 0;
 
+        // Entering Settings: TitleBarIcon only fades out in place, no slide - TitleBarBackButton is the
+        // only one still sliding in that direction. Leaving Settings is unchanged: the icon slides back
+        // in from -SlideDistance while fading, same as TitleBarBackButton's own slide+fade out.
         _titleBarIconSlideAnimation!.From = showBackButton ? 0 : -SlideDistance;
-        _titleBarIconSlideAnimation.To = showBackButton ? -SlideDistance : 0;
+        _titleBarIconSlideAnimation.To = 0;
         _titleBarBackButtonSlideAnimation!.From = showBackButton ? SlideDistance : 0;
         _titleBarBackButtonSlideAnimation.To = showBackButton ? 0 : SlideDistance;
 
@@ -1092,6 +1097,7 @@ public sealed partial class MainWindow : Window
         _trayIconService.StopRequested += TrayIconService_StopRequested;
         _trayIconService.TogglePauseOnMovementForModeRequested += TrayIconService_TogglePauseOnMovementForModeRequested;
         _trayIconService.ToggleBothPauseOnMovementModesRequested += TrayIconService_ToggleBothPauseOnMovementModesRequested;
+        _trayIconService.ToggleCloseToTrayRequested += TrayIconService_ToggleCloseToTrayRequested;
 
         UpdateTrayIconVisibility();
     }
@@ -1167,6 +1173,25 @@ public sealed partial class MainWindow : Window
         }
 
         _settingsPanel.ToggleBothPauseOnMovementModes();
+    }
+
+    /// <summary>
+    /// Handles the tray context menu's "Keep running in system tray" item. Flips SettingsPanel's own
+    /// toggle (via ToggleCloseToTray) rather than writing to AppConfig directly, same reasoning as
+    /// TrayIconService_TogglePauseOnMovementForModeRequested above - CloseToTrayToggle_Toggled stays the
+    /// single place that persists the setting and raises CloseToTrayChanged, which updates _closeToTray
+    /// synchronously before this method continues. Turning it off also restores the window: otherwise,
+    /// if it was already hidden to the tray, there'd be no way left to reach it (closing it again would
+    /// just exit the app instead).
+    /// </summary>
+    private void TrayIconService_ToggleCloseToTrayRequested(object? sender, EventArgs e)
+    {
+        _settingsPanel.ToggleCloseToTray();
+
+        if (!_closeToTray)
+        {
+            ActivateAndBringToForeground();
+        }
     }
 
     /// <summary>
@@ -1347,6 +1372,36 @@ public sealed partial class MainWindow : Window
             _isClosingConfirmed = true;
             Close();
         }
+    }
+
+    /// <summary>
+    /// Used by SettingsPanel's "Restore" button (RestoreDefaultsRequested, raised after it
+    /// has already deleted config.json via ConfigService.RestoreDefaults) to relaunch the app with a
+    /// clean slate.
+    ///
+    /// Sets _isClosingConfirmed first so the Close() below sails through AppWindow_Closing's guards
+    /// untouched - the same bypass the already-confirmed "Close anyway" path above uses - instead of
+    /// showing the "automation still running" dialog a second time or, if "Keep running in system
+    /// tray" is on, just hiding to tray instead of actually closing.
+    ///
+    /// Must wait for Closed to actually fire - not just for Close() to return - before calling
+    /// AppInstance.Restart: App.xaml.cs only releases the single-instance Mutex (SingleInstanceService)
+    /// from its own Closed handler, and the new process's TryAcquire would otherwise see the Mutex
+    /// still held by this (still-alive) process, immediately notify it, and exit - a silent no-op
+    /// restart. Awaiting a TaskCompletionSource set from our own Closed subscription (rather than
+    /// assuming Close() tears the window down synchronously) covers that even if teardown turns out to
+    /// be dispatcher-deferred.
+    /// </summary>
+    private async Task RestartAppAsync()
+    {
+        _isClosingConfirmed = true;
+
+        var closedTcs = new TaskCompletionSource();
+        Closed += (_, _) => closedTcs.TrySetResult();
+        Close();
+        await closedTcs.Task;
+
+        AppInstance.Restart(string.Empty);
     }
 
     private void SizeWindow()

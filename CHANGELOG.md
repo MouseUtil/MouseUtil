@@ -2,6 +2,31 @@
 
 All notable changes to MouseUtil are documented in this file.
 
+## [2.3.0]
+
+### Added
+
+- **"Restore" feature** (Settings > Misc > Restoration): resets every setting to its default and
+  restarts the app so the fresh config actually takes effect. Confirmed via a dialog before anything
+  happens, since it's destructive and irreversible; both the Restoration card's "Restore" button and
+  the confirmation dialog's primary button get a muted red hover/press to signal that.
+
+- **"Keep running in system tray" added to the tray context menu**, mirroring the Settings toggle and
+  showing its current On/Off state. Sits between "Pause on movement" and "Exit"; turning it off from
+  the tray restores the window immediately, since the tray icon itself disappears as soon as the
+  setting turns off.
+
+### Changed
+
+- **"Behavior" settings section renamed to "Automation"**, with the "Taskbar icon progress bar" toggle
+  moved into it from Display.
+
+- Titlebar icon now fades in place instead of sliding out when entering Settings; the back button
+  still slides in as before. Leaving Settings is unchanged.
+
+- Interval options flyout's minimum width bumped slightly (245 to 248) for a better fit (especially
+  for higher display scales).
+
 ## [2.2.2]
 
 ### Removed
@@ -41,7 +66,8 @@ All notable changes to MouseUtil are documented in this file.
   the dedicated Delete mode to remove several in a row. Undo reverses the last delete or "Restore default
   presets" for as long as the flyout stays open. Ships with 3 presets (100ms, 15s, 1m); deleting all of
   them swaps "Edit" for a single "Add preset" prompt instead of leaving an empty grid. A small badge now
-  appears directly on the Interval card whenever Randomize is on, so its state stays visible without opening the flyout. Both toggles persist across launches.
+  appears directly on the Interval card whenever Randomize is on, so its state stays visible without
+  opening the flyout. Both toggles persist across launches.
 
 - **"Launch window" setting** (Settings > App launch behavior): choose whether MouseUtil's window starts
   Normal, Minimized, or hidden to the System tray (the last option only selectable while "Close to tray"

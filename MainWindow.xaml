@@ -563,7 +563,7 @@
                                      back to normal). Opening="IntervalOptionsFlyout_Opening" unconditionally
                                      clears _intervalPresetUndoStack every time the flyout (re)opens. -->
                                 <Flyout x:Name="IntervalOptionsFlyout" Placement="BottomEdgeAlignedRight" Opening="IntervalOptionsFlyout_Opening" Closed="IntervalOptionsFlyout_Closed">
-                                    <StackPanel Spacing="12" MinWidth="245" MaxWidth="266">
+                                    <StackPanel Spacing="12" MinWidth="248" MaxWidth="266">
                                         <!-- Presets title + grid + Edit button, grouped into their own
                                              tight-Spacing StackPanel so the three read as one block, while
                                              still getting the outer StackPanel's full Spacing="12" gap from
