@@ -8,9 +8,10 @@ namespace MouseUtil.Services;
 /// Manual Shell_NotifyIcon-based system tray icon (no NuGet dependency) - shows/hides a tray icon for
 /// the "Close to system tray" feature, and raises <see cref="ShowRequested"/>/<see cref="ExitRequested"/>
 /// for left-click/context-menu actions, plus <see cref="StartRequested"/>/<see cref="StopRequested"/>/
-/// <see cref="TogglePauseOnMovementForModeRequested"/> for the context menu's Start/Stop/"Pause on
-/// movement" items. Registers its callback message through <see cref="GlobalHotkeyService"/>'s existing WndProc
-/// subclass rather than installing a second one.
+/// <see cref="TogglePauseOnMovementForModeRequested"/>/<see cref="ToggleCloseToTrayRequested"/> for the
+/// context menu's Start/Stop/"Pause on movement"/"Keep running in system tray" items. Registers its
+/// callback message through <see cref="GlobalHotkeyService"/>'s existing WndProc subclass rather than
+/// installing a second one.
 ///
 /// Also swaps the displayed icon to reflect the automation's running/paused state and, while
 /// inactive, the system taskbar's current light/dark theme (via NIM_MODIFY - see UpdateState/
@@ -27,6 +28,7 @@ public sealed class TrayIconService : IDisposable
     private const int MenuCommandToggleAutoClickPause = 6;
     private const int MenuCommandToggleJigglePause = 7;
     private const int MenuCommandToggleBothPause = 8;
+    private const int MenuCommandToggleCloseToTray = 9;
 
     private IntPtr _hwnd;
     private bool _isVisible;
@@ -65,6 +67,9 @@ public sealed class TrayIconService : IDisposable
 
     /// <summary>Raised when the user picks "Toggle both ON"/"Toggle both OFF" from the "Pause on movement" submenu (only reachable while inactive and Auto click/Jiggle already agree - see ShowContextMenu).</summary>
     public event EventHandler? ToggleBothPauseOnMovementModesRequested;
+
+    /// <summary>Raised when the user checks/unchecks "Keep running in system tray" in the context menu.</summary>
+    public event EventHandler? ToggleCloseToTrayRequested;
 
     /// <summary>
     /// Wires this service up to the main window: preloads all four tray icon variants from Assets\
@@ -347,6 +352,8 @@ public sealed class TrayIconService : IDisposable
                 NativeMethods.AppendMenu(hMenu, NativeMethods.MF_POPUP | NativeMethods.MF_STRING | (_isRunning ? NativeMethods.MF_GRAYED : NativeMethods.MF_ENABLED), hPauseSubmenu, "Pause on movement");
             }
 
+            NativeMethods.AppendMenu(hMenu, NativeMethods.MF_STRING | (config.CloseToTray ? NativeMethods.MF_CHECKED : NativeMethods.MF_UNCHECKED), (IntPtr)MenuCommandToggleCloseToTray, "Keep running in system tray");
+
             NativeMethods.AppendMenu(hMenu, NativeMethods.MF_SEPARATOR, IntPtr.Zero, string.Empty);
             NativeMethods.AppendMenu(hMenu, NativeMethods.MF_STRING, (IntPtr)MenuCommandExit, "Exit");
 
@@ -393,6 +400,10 @@ public sealed class TrayIconService : IDisposable
             else if (command == MenuCommandToggleBothPause)
             {
                 ToggleBothPauseOnMovementModesRequested?.Invoke(this, EventArgs.Empty);
+            }
+            else if (command == MenuCommandToggleCloseToTray)
+            {
+                ToggleCloseToTrayRequested?.Invoke(this, EventArgs.Empty);
             }
         }
         finally

@@ -39,6 +39,18 @@ internal static class ConfigService
         }
     }
 
+    /// <summary>Deletes config.json, if present, so the next Load() falls back to AppConfig's own defaults (see LoadUnlocked).</summary>
+    public static void RestoreDefaults()
+    {
+        lock (FileLock)
+        {
+            if (File.Exists(ConfigPath))
+            {
+                File.Delete(ConfigPath);
+            }
+        }
+    }
+
     private static AppConfig LoadUnlocked()
     {
         try

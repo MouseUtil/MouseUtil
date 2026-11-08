@@ -57,6 +57,14 @@ public sealed partial class SettingsPanel : UserControl
     public event EventHandler? AboutExpanderExpanded;
 
     /// <summary>
+    /// Raised after the user confirms RestoreDefaultsDialog and ConfigService.RestoreDefaults() has
+    /// already deleted config.json - see RestoreDefaultsButton_Click. MainWindow owns the actual
+    /// restart (closing the window so the single-instance Mutex is released before calling
+    /// AppInstance.Restart), since that needs window/process-lifecycle access this UserControl doesn't have.
+    /// </summary>
+    public event EventHandler? RestoreDefaultsRequested;
+
+    /// <summary>
     /// Raised whenever one of the 5 non-About SettingsExpander cards is expanded - never on collapse -
     /// passing the expander itself so MainWindow can bring it into view within SettingsScrollViewer.
     /// Kept separate from AboutExpanderExpanded since AboutExpander's scroll-to-bottom is
@@ -181,6 +189,7 @@ public sealed partial class SettingsPanel : UserControl
         UpdateStopButtonDisplayExpanderDescription();
 
         CloseToTrayToggle.IsOn = config.CloseToTray;
+        UpdateCloseToTrayCardDescription();
         ShowTaskbarProgressToggle.IsOn = config.ShowTaskbarProgress;
 
         RunAutomationOnLaunchToggle.IsOn = config.RunAutomationOnLaunch;
@@ -275,6 +284,9 @@ public sealed partial class SettingsPanel : UserControl
         PauseOnMovementExpander.Description = string.Join(", ", modes);
     }
 
+    private void UpdateCloseToTrayCardDescription() =>
+        CloseToTrayCard.Description = CloseToTrayToggle.IsOn ? "On" : "Off";
+
     private void UpdateStopButtonDisplayExpanderDescription() =>
         StopButtonDisplayExpander.Description = !ShowStopButtonDisplayToggle.IsOn
             ? "Off"
@@ -350,6 +362,9 @@ public sealed partial class SettingsPanel : UserControl
     /// <summary>Flips the master toggle - used by MainWindow for the tray context menu's "Toggle both ON"/"Toggle both OFF" item, only reachable there while Auto click/Jiggle already agree, so this cascades both to the opposite shared state via PauseOnMovementToggle_Toggled exactly like a direct Settings click would.</summary>
     public void ToggleBothPauseOnMovementModes() => PauseOnMovementToggle.IsOn = !PauseOnMovementToggle.IsOn;
 
+    /// <summary>Flips "Keep running in system tray" - used by MainWindow for the tray context menu's own "Keep running in system tray" item, so CloseToTrayToggle_Toggled stays the single place that persists the setting.</summary>
+    public void ToggleCloseToTray() => CloseToTrayToggle.IsOn = !CloseToTrayToggle.IsOn;
+
     /// <summary>
     /// Same set of controls MainWindow.SetInputsEnabled used to poke directly before these rows
     /// moved into SettingsPanel.
@@ -412,6 +427,25 @@ public sealed partial class SettingsPanel : UserControl
 
     /// <summary>Pure easter egg, no functional behavior - see SettingsIconSpinStoryboard's own comment for why Begin() alone is safe to call on every click.</summary>
     private void SettingsIconButton_Click(object sender, RoutedEventArgs e) => SettingsIconSpinStoryboard.Begin();
+
+    /// <summary>
+    /// Shows RestoreDefaultsDialog; on confirmation, deletes config.json (ConfigService.RestoreDefaults)
+    /// and raises RestoreDefaultsRequested so MainWindow can restart the app - see that event's own
+    /// comment for why the restart itself can't happen here.
+    /// </summary>
+    private async void RestoreDefaultsButton_Click(object sender, RoutedEventArgs e)
+    {
+        RestoreDefaultsDialog.XamlRoot = XamlRoot;
+        var result = await RestoreDefaultsDialog.ShowAsync();
+
+        if (result != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        ConfigService.RestoreDefaults();
+        RestoreDefaultsRequested?.Invoke(this, EventArgs.Empty);
+    }
 
     private void StopButtonDisplayRadioButton_Checked(object sender, RoutedEventArgs e)
     {
@@ -586,6 +620,7 @@ public sealed partial class SettingsPanel : UserControl
 
         ConfigService.Update(c => c.CloseToTray = CloseToTrayToggle.IsOn);
         CloseToTrayChanged?.Invoke(this, EventArgs.Empty);
+        UpdateCloseToTrayCardDescription();
 
         LaunchWindowTrayItem.IsEnabled = CloseToTrayToggle.IsOn;
         if (!CloseToTrayToggle.IsOn && _launchWindowMode == "Tray")

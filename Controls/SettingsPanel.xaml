@@ -6,7 +6,7 @@
     xmlns:settings="using:CommunityToolkit.WinUI.Controls">
 
     <UserControl.Resources>
-        <!-- Shared visual language for every section header below (Display/Behavior/System/About) -
+        <!-- Shared visual language for every section header below (Display/Automation/System/About) -
              Title Case, no border/all-caps, matching native Windows 11 Settings' own group-header look. -->
         <Style x:Key="SectionHeaderTextBlockStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyStrongTextBlockStyle}" />
 
@@ -35,7 +35,7 @@
     </UserControl.Resources>
 
     <!-- Hosted once inside MainWindow's SettingsOverlay - a single instance, never duplicated. Rows
-         are grouped into labeled sections answering one question each for the user (Display, Behavior,
+         are grouped into labeled sections answering one question each for the user (Display, Automation,
          System, About). Each row is its own CommunityToolkit SettingsCard/SettingsExpander (native
          Windows 11 Settings look: icon + header side by side, trailing content right-aligned).
 
@@ -274,32 +274,8 @@
             </settings:SettingsExpander.Items>
         </settings:SettingsExpander>
 
-        <!-- Mirrors the running interval countdown as a progress bar on the app's taskbar icon
-             (ITaskbarList3 - see Services/TaskbarProgressService), turning amber/yellow automatically
-             while paused. Never disabled while running. Grouped under Display since it's a "what do
-             I see while running" option from the user's point of view. -->
-        <settings:SettingsCard
-            x:Name="ShowTaskbarProgressCard"
-            Header="Taskbar icon progress bar"
-            Description="Counts down; amber while paused"
-            AutomationProperties.AutomationId="ShowTaskbarProgressCard">
-            <settings:SettingsCard.HeaderIcon>
-                <FontIcon Glyph="&#xE75B;" />
-            </settings:SettingsCard.HeaderIcon>
-            <ToggleSwitch
-                x:Name="ShowTaskbarProgressToggle"
-                OnContent=""
-                OffContent=""
-                MinWidth="0"
-                Width="44"
-                Padding="0"
-                Toggled="ShowTaskbarProgressToggle_Toggled"
-                AutomationProperties.AutomationId="ShowTaskbarProgressToggle"
-                AutomationProperties.Name="Taskbar icon progress bar" />
-        </settings:SettingsCard>
-
-        <!-- Behavior -->
-        <TextBlock Text="Behavior" Style="{StaticResource SectionHeaderTextBlockStyle}" Margin="0,12,0,4" />
+        <!-- Automation -->
+        <TextBlock Text="Automation" Style="{StaticResource SectionHeaderTextBlockStyle}" Margin="0,12,0,4" />
 
         <!-- Start/Stop global hotkey (F6 by default) - recorded via HotkeyButton_Click (enters
              recording mode) / HotkeyButton_KeyDown (captures the next key + held modifiers, or Escape
@@ -386,6 +362,30 @@
                 </settings:SettingsCard>
             </settings:SettingsExpander.Items>
         </settings:SettingsExpander>
+
+        <!-- Mirrors the running interval countdown as a progress bar on the app's taskbar icon
+             (ITaskbarList3 - see Services/TaskbarProgressService), turning amber/yellow automatically
+             while paused. Never disabled while running. Grouped here next to Pause on movement since
+             both describe what happens while automation is actively running. -->
+        <settings:SettingsCard
+            x:Name="ShowTaskbarProgressCard"
+            Header="Taskbar icon progress bar"
+            Description="Counts down; amber while paused"
+            AutomationProperties.AutomationId="ShowTaskbarProgressCard">
+            <settings:SettingsCard.HeaderIcon>
+                <FontIcon Glyph="&#xE75B;" />
+            </settings:SettingsCard.HeaderIcon>
+            <ToggleSwitch
+                x:Name="ShowTaskbarProgressToggle"
+                OnContent=""
+                OffContent=""
+                MinWidth="0"
+                Width="44"
+                Padding="0"
+                Toggled="ShowTaskbarProgressToggle_Toggled"
+                AutomationProperties.AutomationId="ShowTaskbarProgressToggle"
+                AutomationProperties.Name="Taskbar icon progress bar" />
+        </settings:SettingsCard>
 
         <!-- Applies on every app launch, independently of StartWithWindowsCard below (which only
              controls whether Windows itself launches the app at logon) - see MainWindow's
@@ -506,6 +506,37 @@
             Visibility="Collapsed"
             AutomationProperties.AutomationId="StartupTaskErrorTextBlock" />
 
+        <TextBlock Text="Misc" Style="{StaticResource SectionHeaderTextBlockStyle}" Margin="0,12,0,4" />
+
+        <!-- Destructive/irreversible - confirmed via RestoreDefaultsDialog before anything happens, see
+             RestoreDefaultsButton_Click. Same Header/HeaderIcon shape as CloseToTrayCard/
+             StartWithWindowsCard in System above, with the Button as this card's trailing content
+             instead of a ToggleSwitch. -->
+        <settings:SettingsCard
+            x:Name="RestoreDefaultsCard"
+            Header="Restoration"
+            Description="Restores all settings to default"
+            AutomationProperties.AutomationId="RestoreDefaultsCard">
+            <settings:SettingsCard.HeaderIcon>
+                <FontIcon Glyph="&#xE777;" />
+            </settings:SettingsCard.HeaderIcon>
+            <!-- Muted red hover/press, like PowerToggleAlternateButton's Paused state. Overriding these
+                 specific resource keys locally (rather than a separate Style) is what the default Button
+                 template itself reads for PointerOver/Pressed. -->
+            <Button
+                x:Name="RestoreDefaultsButton"
+                Content="Restore"
+                Click="RestoreDefaultsButton_Click"
+                AutomationProperties.AutomationId="RestoreDefaultsButton">
+                <Button.Resources>
+                    <ThemeResource x:Key="ButtonBackgroundPointerOver" ResourceKey="SystemFillColorCriticalBackgroundBrush" />
+                    <ThemeResource x:Key="ButtonBackgroundPressed" ResourceKey="SystemFillColorCriticalBackgroundBrush" />
+                    <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="{ThemeResource SystemFillColorCritical}" />
+                    <SolidColorBrush x:Key="ButtonForegroundPressed" Color="{ThemeResource SystemFillColorCritical}" />
+                </Button.Resources>
+            </Button>
+        </settings:SettingsCard>
+
         <!-- About -->
         <TextBlock Text="About" Style="{StaticResource SectionHeaderTextBlockStyle}" Margin="0,12,0,4" />
 
@@ -547,5 +578,25 @@
                 </settings:SettingsCard>
             </settings:SettingsExpander.Items>
         </settings:SettingsExpander>
+
+        <!-- Confirms RestoreDefaultsButton before anything happens - destructive and irreversible,
+             same Title/PrimaryButtonText/CloseButtonText/DefaultButton shape as MainWindow's own
+             CloseConfirmationDialog. DefaultButton="Close" keeps Enter/Escape on the safe Cancel option.
+             A plain child of this flat StackPanel (unlike CloseConfirmationDialog, which must dodge a
+             Collapsed MainContentGrid while Settings is open) is fine here: this dialog is only ever
+             shown from a button reachable solely while SettingsPanel's entire ancestor chain, including
+             this StackPanel, is already Visible - unshown, a ContentDialog renders at zero size anyway. -->
+        <ContentDialog
+            x:Name="RestoreDefaultsDialog"
+            Title="Restore all settings?"
+            PrimaryButtonText="Restore and restart"
+            CloseButtonText="Cancel"
+            DefaultButton="Close">
+            <ContentDialog.Content>
+                <TextBlock TextWrapping="Wrap">
+                    This restores every configuration to default and<LineBreak/>restarts the app. This can't be undone.
+                </TextBlock>
+            </ContentDialog.Content>
+        </ContentDialog>
     </StackPanel>
 </UserControl>

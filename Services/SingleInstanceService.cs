@@ -72,11 +72,15 @@ internal static class SingleInstanceService
 
     /// <summary>
     /// Releases the Mutex this (first) instance has held since a successful TryAcquire(). Must only
-    /// be called by the owning instance, at real process shutdown.
+    /// be called by the owning instance, at real process shutdown. Nulls out _mutex afterward so a
+    /// second call (e.g. MainWindow's own restart path explicitly closing the window, which raises the
+    /// same Closed event App.xaml.cs already hooked this into) is a harmless no-op instead of throwing
+    /// on an already-disposed Mutex.
     /// </summary>
     public static void Release()
     {
         _mutex?.ReleaseMutex();
         _mutex?.Dispose();
+        _mutex = null;
     }
 }
